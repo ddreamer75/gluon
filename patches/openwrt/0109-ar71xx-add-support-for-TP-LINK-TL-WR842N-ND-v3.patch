@@ -1,19 +1,17 @@
-From 78898725571bc6b00fc578b5c01d87217d2ba142 Mon Sep 17 00:00:00 2001
-From: Simon Wunderlich <sw@simonwunderlich.de>
-Date: Fri, 19 Aug 2016 11:59:56 +0200
-Subject: [PATCH] foo
+From: Matthias Schiffer <mschiffer@universe-factory.net>
+Date: Sun, 3 Jul 2016 22:14:18 +0200
+Subject: ar71xx: add support for TP-LINK TL-WR842N/ND v3
 
-Signed-off-by: Simon Wunderlich <sw@simonwunderlich.de>
----
- target/linux/ar71xx/base-files/etc/diag.sh         |   1 +
- .../ar71xx/base-files/etc/uci-defaults/01_leds     |  20 +++
- .../ar71xx/base-files/etc/uci-defaults/02_network  |   1 +
- target/linux/ar71xx/base-files/lib/ar71xx.sh       |   3 +
- .../ar71xx/base-files/lib/upgrade/platform.sh      |   1 +
- .../files/arch/mips/ath79/mach-tl-wr841n-v9.c      | 173 ++++++++++++++++++++-
- target/linux/ar71xx/image/Makefile                 |   9 +-
- .../610-MIPS-ath79-openwrt-machines.patch          |  18 ++-
- 8 files changed, 216 insertions(+), 10 deletions(-)
+- CPU QCA9531-BL3A
+- RAM: 64MB
+- flash: 16MB
+- USB
+
+AP143 platform, similar to tl-wr841n v10/v11, but with USB
+
+Signed-off-by: Cezary Jackiewicz <cezary@eko.one.pl>
+
+Backport of LEDE 0b45bec22c59cc6e6b2fa71dc9a88386c5587132
 
 diff --git a/target/linux/ar71xx/base-files/etc/diag.sh b/target/linux/ar71xx/base-files/etc/diag.sh
 index 631459f..45879e4 100644
@@ -28,23 +26,13 @@ index 631459f..45879e4 100644
  	tl-wr941nd-v5)
  		status_led="tp-link:green:system"
 diff --git a/target/linux/ar71xx/base-files/etc/uci-defaults/01_leds b/target/linux/ar71xx/base-files/etc/uci-defaults/01_leds
-index 9a768cd..1f8cc64 100644
+index 9a768cd..fcad15d 100644
 --- a/target/linux/ar71xx/base-files/etc/uci-defaults/01_leds
 +++ b/target/linux/ar71xx/base-files/etc/uci-defaults/01_leds
-@@ -509,6 +509,26 @@ tl-wr842n-v2)
+@@ -509,6 +509,16 @@ tl-wr842n-v2)
  	ucidef_set_led_usbdev "usb" "USB" "tp-link:green:3g" "1-1"
  	;;
  
-+tl-wr842n-v3)
-+	ucidef_set_led_netdev "wan" "WAN" "tp-link:green:wan" "eth1"
-+	ucidef_set_led_switch "lan1" "LAN1" "tp-link:green:lan1" "switch0" "0x10"
-+	ucidef_set_led_switch "lan2" "LAN2" "tp-link:green:lan2" "switch0" "0x08"
-+	ucidef_set_led_switch "lan3" "LAN3" "tp-link:green:lan3" "switch0" "0x04"
-+	ucidef_set_led_switch "lan4" "LAN4" "tp-link:green:lan4" "switch0" "0x02"
-+	ucidef_set_led_wlan "wlan" "WLAN" "tp-link:green:wlan" "phy0tpt"
-+	ucidef_set_led_usbdev "usb" "USB" "tp-link:green:3g" "1-1"
-+	;;
-+
 +tl-wr842n-v3)
 +	ucidef_set_led_netdev "wan" "WAN" "tp-link:green:wan" "eth1"
 +	ucidef_set_led_switch "lan1" "LAN1" "tp-link:green:lan1" "switch0" "0x10"
@@ -97,7 +85,7 @@ index d3e8a79..ff00a08 100755
  	tl-wr941nd-v5 | \
  	tl-wr941nd-v6 | \
 diff --git a/target/linux/ar71xx/files/arch/mips/ath79/mach-tl-wr841n-v9.c b/target/linux/ar71xx/files/arch/mips/ath79/mach-tl-wr841n-v9.c
-index 3e5c2a2..b4df6f5 100644
+index 3e5c2a2..0209603 100644
 --- a/target/linux/ar71xx/files/arch/mips/ath79/mach-tl-wr841n-v9.c
 +++ b/target/linux/ar71xx/files/arch/mips/ath79/mach-tl-wr841n-v9.c
 @@ -1,7 +1,8 @@
@@ -118,7 +106,7 @@ index 3e5c2a2..b4df6f5 100644
  #include "dev-wmac.h"
  #include "machtypes.h"
  
-@@ -33,6 +35,34 @@
+@@ -33,6 +35,20 @@
  #define TL_WR841NV9_GPIO_BTN_RESET	12
  #define TL_WR841NV9_GPIO_BTN_WIFI	17
  
@@ -136,24 +124,10 @@ index 3e5c2a2..b4df6f5 100644
 +#define TL_WR842NV3_GPIO_BTN_RESET	1
 +#define TL_WR842NV3_GPIO_BTN_WIFI	0
 +
-+#define TL_WR842NV3_GPIO_LED_SYSTEM	2
-+#define TL_WR842NV3_GPIO_LED_WLAN	3
-+#define TL_WR842NV3_GPIO_LED_WAN_RED	4
-+#define TL_WR842NV3_GPIO_LED_WAN_GREEN	11
-+#define TL_WR842NV3_GPIO_LED_LAN1	12
-+#define TL_WR842NV3_GPIO_LED_LAN2	13
-+#define TL_WR842NV3_GPIO_LED_LAN3	14
-+#define TL_WR842NV3_GPIO_LED_LAN4	15
-+#define TL_WR842NV3_GPIO_LED_3G		16
-+#define TL_WR842NV3_GPIO_LED_WPS	17
-+
-+#define TL_WR842NV3_GPIO_BTN_RESET	1
-+#define TL_WR842NV3_GPIO_BTN_WIFI	0
-+
  #define TL_WR841NV9_KEYS_POLL_INTERVAL	20	/* msecs */
  #define TL_WR841NV9_KEYS_DEBOUNCE_INTERVAL (3 * TL_WR841NV9_KEYS_POLL_INTERVAL)
  
-@@ -95,6 +125,130 @@ static struct gpio_keys_button tl_wr841n_v9_gpio_keys[] __initdata = {
+@@ -95,6 +111,68 @@ static struct gpio_keys_button tl_wr841n_v9_gpio_keys[] __initdata = {
  	}
  };
  
@@ -219,72 +193,10 @@ index 3e5c2a2..b4df6f5 100644
 +	}
 +};
 +
-+static struct gpio_led tl_wr842n_v3_leds_gpio[] __initdata = {
-+	{
-+		.name		= "tp-link:green:lan1",
-+		.gpio		= TL_WR842NV3_GPIO_LED_LAN1,
-+		.active_low	= 1,
-+	}, {
-+		.name		= "tp-link:green:lan2",
-+		.gpio		= TL_WR842NV3_GPIO_LED_LAN2,
-+		.active_low	= 1,
-+	}, {
-+		.name		= "tp-link:green:lan3",
-+		.gpio		= TL_WR842NV3_GPIO_LED_LAN3,
-+		.active_low	= 1,
-+	}, {
-+		.name		= "tp-link:green:lan4",
-+		.gpio		= TL_WR842NV3_GPIO_LED_LAN4,
-+		.active_low	= 1,
-+	}, {
-+		.name		= "tp-link:green:wan",
-+		.gpio		= TL_WR842NV3_GPIO_LED_WAN_GREEN,
-+		.active_low	= 1,
-+	}, {
-+		.name		= "tp-link:red:wan",
-+		.gpio		= TL_WR842NV3_GPIO_LED_WAN_RED,
-+		.active_low	= 1,
-+	}, {
-+		.name		= "tp-link:green:wlan",
-+		.gpio		= TL_WR842NV3_GPIO_LED_WLAN,
-+		.active_low	= 1,
-+	}, {
-+		.name		= "tp-link:green:system",
-+		.gpio		= TL_WR842NV3_GPIO_LED_SYSTEM,
-+		.active_low	= 1,
-+	}, {
-+		.name		= "tp-link:green:3g",
-+		.gpio		= TL_WR842NV3_GPIO_LED_3G,
-+		.active_low	= 1,
-+	}, {
-+		.name		= "tp-link:green:wps",
-+		.gpio		= TL_WR842NV3_GPIO_LED_WPS,
-+		.active_low	= 1,
-+	},
-+};
-+
-+static struct gpio_keys_button tl_wr842n_v3_gpio_keys[] __initdata = {
-+	{
-+		.desc		= "Reset button",
-+		.type		= EV_KEY,
-+		.code		= KEY_RESTART,
-+		.debounce_interval = TL_WR841NV9_KEYS_DEBOUNCE_INTERVAL,
-+		.gpio		= TL_WR842NV3_GPIO_BTN_RESET,
-+		.active_low	= 1,
-+	}, {
-+		.desc		= "WIFI button",
-+		.type		= EV_KEY,
-+		.code		= KEY_RFKILL,
-+		.debounce_interval = TL_WR841NV9_KEYS_DEBOUNCE_INTERVAL,
-+		.gpio		= TL_WR842NV3_GPIO_BTN_WIFI,
-+		.active_low	= 1,
-+	}
-+};
-+
  
  static void __init tl_ap143_setup(void)
  {
-@@ -142,3 +296,20 @@ static void __init tl_wr841n_v9_setup(void)
+@@ -142,3 +220,20 @@ static void __init tl_wr841n_v9_setup(void)
  
  MIPS_MACHINE(ATH79_MACH_TL_WR841N_V9, "TL-WR841N-v9", "TP-LINK TL-WR841N/ND v9",
  	     tl_wr841n_v9_setup);
@@ -333,9 +245,17 @@ index 8551399..7ef2766 100644
  define Device/tl-wr941nd-v5
      $(Device/tplink-4mlzma)
 diff --git a/target/linux/ar71xx/patches-3.18/610-MIPS-ath79-openwrt-machines.patch b/target/linux/ar71xx/patches-3.18/610-MIPS-ath79-openwrt-machines.patch
-index d6e786d..800afcf 100644
+index d6e786d..0d7855b 100644
 --- a/target/linux/ar71xx/patches-3.18/610-MIPS-ath79-openwrt-machines.patch
 +++ b/target/linux/ar71xx/patches-3.18/610-MIPS-ath79-openwrt-machines.patch
+@@ -1,6 +1,6 @@
+ --- a/arch/mips/ath79/machtypes.h
+ +++ b/arch/mips/ath79/machtypes.h
+-@@ -16,22 +16,199 @@
++@@ -16,22 +16,200 @@
+  
+  enum ath79_mach_type {
+  	ATH79_MACH_GENERIC = 0,
 @@ -147,6 +147,7 @@
  +	ATH79_MACH_TL_WR841N_V8,	/* TP-LINK TL-WR841N/ND v8 */
  +	ATH79_MACH_TL_WR841N_V9,	/* TP-LINK TL-WR841N/ND v9 */
@@ -375,6 +295,3 @@ index d6e786d..800afcf 100644
  +
  +config ATH79_MACH_TL_WR941ND
  +	bool "TP-LINK TL-WR941ND support"
--- 
-2.9.3
-
