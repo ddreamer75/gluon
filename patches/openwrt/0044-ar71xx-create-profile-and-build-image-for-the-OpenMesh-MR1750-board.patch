@@ -35,10 +35,10 @@ index 41b462e..06cf135 100644
  
  define Profile/OPENMESH/Description
 diff --git a/target/linux/ar71xx/image/Makefile b/target/linux/ar71xx/image/Makefile
-index 5b0a4ec..5dd594b 100644
+index a3579fd..752b8fe 100644
 --- a/target/linux/ar71xx/image/Makefile
 +++ b/target/linux/ar71xx/image/Makefile
-@@ -2015,6 +2015,7 @@ $(eval $(call SingleProfile,OpenMesh,squashfs-only,OM2P,om2p,,,,OM2P))
+@@ -2019,6 +2019,7 @@ $(eval $(call SingleProfile,OpenMesh,squashfs-only,OM2P,om2p,,,,OM2P))
  $(eval $(call SingleProfile,OpenMesh,squashfs-only,OM5P,om5p,,,,OM5P))
  $(eval $(call SingleProfile,OpenMesh,squashfs-only,MR600,mr600,,,,MR600))
  $(eval $(call SingleProfile,OpenMesh,squashfs-only,MR900,mr900,,,,MR900))
@@ -46,7 +46,7 @@ index 5b0a4ec..5dd594b 100644
  
  $(eval $(call SingleProfile,PB4X,128k,ALL0305,all0305,ALL0305,ttyS0,115200))
  $(eval $(call SingleProfile,PB4X,128k,EAP7660D,eap7660d,EAP7660D,ttyS0,115200))
-@@ -2108,7 +2109,7 @@ $(eval $(call MultiProfile,AP121,AP121_2M AP121_4M))
+@@ -2112,7 +2113,7 @@ $(eval $(call MultiProfile,AP121,AP121_2M AP121_4M))
  $(eval $(call MultiProfile,DIR615IX,DIR615I1 DIR615I3))
  $(eval $(call MultiProfile,AP136,AP136_010 AP136_020))
  $(eval $(call MultiProfile,EWDORIN, EWDORINAP EWDORINRT EWDORIN16M))

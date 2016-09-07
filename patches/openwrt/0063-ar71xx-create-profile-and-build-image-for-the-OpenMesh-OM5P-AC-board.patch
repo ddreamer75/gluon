@@ -31,10 +31,10 @@ index 06cf135..64aaa24 100644
          NAME:=OpenMesh MR600
          PACKAGES:=kmod-ath9k om-watchdog
 diff --git a/target/linux/ar71xx/image/Makefile b/target/linux/ar71xx/image/Makefile
-index 5dd594b..8551399 100644
+index 752b8fe..06f67bb 100644
 --- a/target/linux/ar71xx/image/Makefile
 +++ b/target/linux/ar71xx/image/Makefile
-@@ -2013,6 +2013,7 @@ $(eval $(call SingleProfile,Netgear,64kraw,WPN824N,wpn824n,WPN824N,ttyS0,115200,
+@@ -2017,6 +2017,7 @@ $(eval $(call SingleProfile,Netgear,64kraw,WPN824N,wpn824n,WPN824N,ttyS0,115200,
  
  $(eval $(call SingleProfile,OpenMesh,squashfs-only,OM2P,om2p,,,,OM2P))
  $(eval $(call SingleProfile,OpenMesh,squashfs-only,OM5P,om5p,,,,OM5P))
@@ -42,7 +42,7 @@ index 5dd594b..8551399 100644
  $(eval $(call SingleProfile,OpenMesh,squashfs-only,MR600,mr600,,,,MR600))
  $(eval $(call SingleProfile,OpenMesh,squashfs-only,MR900,mr900,,,,MR900))
  $(eval $(call SingleProfile,OpenMesh,squashfs-only,MR1750,mr1750,,,,MR1750))
-@@ -2109,7 +2110,7 @@ $(eval $(call MultiProfile,AP121,AP121_2M AP121_4M))
+@@ -2113,7 +2114,7 @@ $(eval $(call MultiProfile,AP121,AP121_2M AP121_4M))
  $(eval $(call MultiProfile,DIR615IX,DIR615I1 DIR615I3))
  $(eval $(call MultiProfile,AP136,AP136_010 AP136_020))
  $(eval $(call MultiProfile,EWDORIN, EWDORINAP EWDORINRT EWDORIN16M))

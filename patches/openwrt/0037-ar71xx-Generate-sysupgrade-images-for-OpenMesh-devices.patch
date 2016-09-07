@@ -15,10 +15,10 @@ Signed-off-by: Sven Eckelmann <sven.eckelmann@open-mesh.com>
 Forwarded: https://patchwork.ozlabs.org/patch/624172/
 
 diff --git a/target/linux/ar71xx/image/Makefile b/target/linux/ar71xx/image/Makefile
-index 9a7acbd..5b0a4ec 100644
+index 2fef79bc..a3579fd 100644
 --- a/target/linux/ar71xx/image/Makefile
 +++ b/target/linux/ar71xx/image/Makefile
-@@ -1847,6 +1847,9 @@ define Image/Build/OpenMesh
+@@ -1851,6 +1851,9 @@ define Image/Build/OpenMesh
  		"$(BUILD_DIR)/fwupgrade.cfg-$(4)" "fwupgrade.cfg" \
  		"$(KDIR_TMP)/vmlinux-$(2).uImage" "kernel" \
  		"$(KDIR)/root.$(1)" "rootfs"

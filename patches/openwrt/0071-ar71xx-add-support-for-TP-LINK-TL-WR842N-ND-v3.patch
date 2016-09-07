@@ -218,10 +218,10 @@ index 3e5c2a2..0209603 100644
 +MIPS_MACHINE(ATH79_MACH_TL_WR842N_V3, "TL-WR842N-v3", "TP-LINK TL-WR842N/ND v3",
 +	     tl_wr842n_v3_setup);
 diff --git a/target/linux/ar71xx/image/Makefile b/target/linux/ar71xx/image/Makefile
-index 8551399..7ef2766 100644
+index 06f67bb..35ccd53 100644
 --- a/target/linux/ar71xx/image/Makefile
 +++ b/target/linux/ar71xx/image/Makefile
-@@ -590,6 +590,13 @@ define Device/tl-wr842n-v2
+@@ -594,6 +594,13 @@ define Device/tl-wr842n-v2
      TPLINK_HWID := 0x8420002
  endef
  
@@ -235,7 +235,7 @@ index 8551399..7ef2766 100644
  define Device/tl-wr843nd-v1
      $(Device/tplink-4mlzma)
      BOARDNAME := TL-WR841N-v8
-@@ -603,7 +610,7 @@ define Device/tl-wr847n-v8
+@@ -607,7 +614,7 @@ define Device/tl-wr847n-v8
      DEVICE_PROFILE := TLWR841
      TPLINK_HWID := 0x08470008
  endef
