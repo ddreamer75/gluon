@@ -5,7 +5,7 @@ Subject: batman-adv: Upgrade to batman-adv 2016.3
 Signed-off-by: Sven Eckelmann <sven@narfation.org>
 
 diff --git a/alfred/Makefile b/alfred/Makefile
-index f1d7c6e..319795a 100644
+index f1d7c6e..4eae249 100644
 --- a/alfred/Makefile
 +++ b/alfred/Makefile
 @@ -8,15 +8,15 @@
@@ -38,7 +38,7 @@ index f1d7c6e..319795a 100644
    CATEGORY:=Network
    TITLE:=A.L.F.R.E.D. - Almighty Lightweight Fact Remote Exchange Daemon
 -  DEPENDS:= +libc +kmod-ipv6 +librt +batman-adv-visdata \
-+  DEPENDS:= +libc @IPV6 +libnl-tiny +librt \
++  DEPENDS:= +libc @IPV6 +libnl-tiny +librt +batman-adv-visdata \
  	  +ALFRED_NEEDS_lua:lua \
  	  +ALFRED_NEEDS_libgps:libgps
  endef
