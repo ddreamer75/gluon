@@ -1,0 +1,76 @@
+From: Sven Eckelmann <sven@narfation.org>
+Date: Fri, 23 Sep 2016 14:21:16 +0200
+Subject: Disable alfred no-debugfs hack in favor of netlink
+
+diff --git a/alfred/Makefile b/alfred/Makefile
+index 4eae249..319795a 100644
+--- a/alfred/Makefile
++++ b/alfred/Makefile
+@@ -28,7 +28,7 @@ define Package/alfred
+   SECTION:=net
+   CATEGORY:=Network
+   TITLE:=A.L.F.R.E.D. - Almighty Lightweight Fact Remote Exchange Daemon
+-  DEPENDS:= +libc @IPV6 +libnl-tiny +librt +batman-adv-visdata \
++  DEPENDS:= +libc @IPV6 +libnl-tiny +librt \
+ 	  +ALFRED_NEEDS_lua:lua \
+ 	  +ALFRED_NEEDS_libgps:libgps
+ endef
+diff --git a/alfred/patches/0002-alfred-use-batman-adv-visdata.patch b/alfred/patches/0002-alfred-use-batman-adv-visdata.patch
+deleted file mode 100644
+index 25104aa..0000000
+--- a/alfred/patches/0002-alfred-use-batman-adv-visdata.patch
++++ /dev/null
+@@ -1,53 +0,0 @@
+-diff --git a/batadv_query.c b/batadv_query.c
+-index a671b79..b377cc9 100644
+---- a/batadv_query.c
+-+++ b/batadv_query.c
+-@@ -138,6 +138,7 @@ int ipv6_to_mac(const struct in6_addr *addr, struct ether_addr *mac)
+- 
+- int batadv_interface_check(const char *mesh_iface)
+- {
+-+#if 0
+- 	char full_path[MAX_PATH + 1];
+- 	FILE *f;
+- 
+-@@ -162,6 +163,7 @@ int batadv_interface_check(const char *mesh_iface)
+- 		return -1;
+- 	}
+- 	fclose(f);
+-+#endif
+- 
+- 	return 0;
+- }
+-@@ -185,8 +187,7 @@ static int translate_mac_debugfs(const char *mesh_iface,
+- 	int line_invalid;
+- 	bool found = false;
+- 
+--	debugfs_make_path(DEBUG_BATIF_PATH_FMT "/" DEBUG_TRANSTABLE_GLOBAL,
+--			  mesh_iface, full_path, sizeof(full_path));
+-+	snprintf(full_path, sizeof(full_path), "/tmp/batman-adv-visdata/%s/transtable_global", mesh_iface);
+- 
+- 	f = fopen(full_path, "r");
+- 	if (!f)
+-@@ -293,8 +294,7 @@ static int get_tq_debugfs(const char *mesh_iface, struct ether_addr *mac,
+- 
+- 	memcpy(&in_mac, mac, sizeof(in_mac));
+- 
+--	debugfs_make_path(DEBUG_BATIF_PATH_FMT "/" DEBUG_ORIGINATORS,
+--			  mesh_iface, full_path, sizeof(full_path));
+-+	snprintf(full_path, sizeof(full_path), "/tmp/batman-adv-visdata/%s/originators", mesh_iface);
+- 
+- 	f = fopen(full_path, "r");
+- 	if (!f)
+-diff --git a/vis/vis.c b/vis/vis.c
+-index d6bac41..b865508 100644
+---- a/vis/vis.c
+-+++ b/vis/vis.c
+-@@ -541,7 +541,7 @@ static int parse_orig_list_debugfs(struct globals *globals)
+- 	char path[1024];
+- 	struct vis_list_entry *v_entry;
+- 
+--	debugfs_make_path(DEBUG_BATIF_PATH_FMT "/" "originators", globals->interface, path, sizeof(path));
+-+	snprintf(path, sizeof(path), "/tmp/batman-adv-visdata/%s/originators", globals->interface);
+- 	fbuf = read_file(path);
+- 	if (!fbuf)
+- 		return -1;
