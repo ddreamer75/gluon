@@ -68,6 +68,12 @@ struct gw_netlink_opts {
 	struct nlquery_opts query_opts;
 };
 
+struct clients_netlink_opts {
+	size_t total;
+	size_t wifi;
+	struct nlquery_opts query_opts;
+};
+
 
 static struct json_object * get_addresses(void) {
 	FILE *f = fopen("/proc/net/if_inet6", "r");
@@ -443,39 +449,68 @@ static void count_stations(size_t *wifi24, size_t *wifi5) {
 	uci_free_context(ctx);
 }
 
+static const int clients_mandatory[] = {
+	BATADV_ATTR_TT_FLAGS,
+};
+
+static int parse_clients_list_netlink_cb(struct nl_msg *msg, void *arg)
+{
+	struct nlattr *attrs[BATADV_ATTR_MAX+1];
+	struct nlmsghdr *nlh = nlmsg_hdr(msg);
+	struct nlquery_opts *query_opts = arg;
+	struct genlmsghdr *ghdr;
+	struct clients_netlink_opts *opts;
+	uint32_t flags;
+
+	opts = container_of(query_opts, struct clients_netlink_opts, query_opts);
+
+	if (!genlmsg_valid_hdr(nlh, 0))
+		return NL_OK;
+
+	ghdr = nlmsg_data(nlh);
+
+	if (ghdr->cmd != BATADV_CMD_GET_TRANSTABLE_LOCAL)
+		return NL_OK;
+
+	if (nla_parse(attrs, BATADV_ATTR_MAX, genlmsg_attrdata(ghdr, 0),
+		      genlmsg_len(ghdr), batadv_netlink_policy))
+		return NL_OK;
+
+	if (missing_mandatory_attrs(attrs, clients_mandatory,
+				    ARRAY_SIZE(clients_mandatory)))
+		return NL_OK;
+
+	flags = nla_get_u32(attrs[BATADV_ATTR_TT_FLAGS]);
+
+	if (flags & BATADV_TT_CLIENT_NOPURGE)
+		return NL_OK;
+
+	if (flags & BATADV_TT_CLIENT_WIFI)
+		opts->wifi++;
+
+	opts->total++;
+
+	return NL_OK;
+}
+
 static struct json_object * get_clients(void) {
-	size_t total = 0, wifi = 0, wifi24 = 0, wifi5 = 0;
+	size_t wifi24 = 0, wifi5 = 0;
+	struct clients_netlink_opts opts = {
+		.total = 0,
+		.wifi = 0,
+		.query_opts = {
+			.err = 0,
+		},
+	};
 
-	FILE *f = fopen("/sys/kernel/debug/batman_adv/bat0/transtable_local", "r");
-	if (!f)
-		return NULL;
-
-	char *line = NULL;
-	size_t len = 0;
-
-	while (getline(&line, &len, f) >= 0) {
-		char flags[16];
-
-		if (sscanf(line, " * %*[^[] [%15[^]]]", flags) != 1)
-			continue;
-
-		if (strchr(flags, 'P'))
-			continue;
-
-		total++;
-
-		if (strchr(flags, 'W'))
-			wifi++;
-	}
-
-	free(line);
-	fclose(f);
+	netlink_query_common("bat0", BATADV_CMD_GET_TRANSTABLE_LOCAL,
+			     parse_clients_list_netlink_cb, &opts.query_opts);
 
 	count_stations(&wifi24, &wifi5);
 
 	struct json_object *ret = json_object_new_object();
-	json_object_object_add(ret, "total", json_object_new_int(total));
-	json_object_object_add(ret, "wifi", json_object_new_int(wifi));
+	json_object_object_add(ret, "total", json_object_new_int(opts.total));
+	json_object_object_add(ret, "wifi", json_object_new_int(opts.wifi));
 	json_object_object_add(ret, "wifi24", json_object_new_int(wifi24));
 	json_object_object_add(ret, "wifi5", json_object_new_int(wifi5));
 	return ret;
