@@ -156,7 +156,8 @@ $(eval $(call GluonProfile,ARCHERC5,kmod-ath10k ath10k-firmware-qca988x-ct,ARCHE
 $(eval $(call GluonModel,ARCHERC5,archer-c5,tp-link-archer-c5-v1)) # BROKEN: ath10k
 
 # Archer C7 v1
-$(eval $(call GluonModel,ARCHERC7,archer-c7-v1,tp-link-archer-c7-v1)) # BROKEN: ath10k
+$(eval $(call GluonProfile,ARCHERC7V1,kmod-ath10k ath10k-firmware-qca988x-ct,ARCHERC7))
+$(eval $(call GluonModel,ARCHERC7V1,archer-c7-v1,tp-link-archer-c7-v1)) # BROKEN: ath10k
 
 # Archer C7 v2
 $(eval $(call GluonProfile,ARCHERC7,kmod-ath10k ath10k-firmware-qca988x-ct))
