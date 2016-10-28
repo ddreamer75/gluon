@@ -1,0 +1,181 @@
+From: Sven Eckelmann <sven@narfation.org>
+Date: Fri, 30 Sep 2016 10:10:51 +0200
+Subject: batman-adv: upgrade package to latest release 2016.4
+
+Signed-off-by: Sven Eckelmann <sven@narfation.org>
+
+Origin: upstream, https://github.com/openwrt-routing/packages/commit/215d6b834fd1191c2b7c078020bc0cc204495caa
+
+diff --git a/batman-adv/Config.in b/batman-adv/Config.in
+index 48092e7..8c75f31 100644
+--- a/batman-adv/Config.in
++++ b/batman-adv/Config.in
+@@ -14,6 +14,11 @@ config KMOD_BATMAN_ADV_DAT
+ 	depends on PACKAGE_kmod-batman-adv
+ 	default y
+ 
++config KMOD_BATMAN_ADV_DEBUGFS
++	bool "enable debugfs support"
++	depends on PACKAGE_kmod-batman-adv
++	default y
++
+ config KMOD_BATMAN_ADV_MCAST
+ 	bool "enable multicast transmission optimization"
+ 	depends on PACKAGE_kmod-batman-adv
+diff --git a/batman-adv/Makefile b/batman-adv/Makefile
+index e12c166..23b2f74 100644
+--- a/batman-adv/Makefile
++++ b/batman-adv/Makefile
+@@ -10,9 +10,9 @@ include $(TOPDIR)/rules.mk
+ 
+ PKG_NAME:=batman-adv
+ 
+-PKG_VERSION:=2016.3
++PKG_VERSION:=2016.4
+ PKG_RELEASE:=0
+-PKG_MD5SUM:=63f530a62c3d48ed0c7e42f47dfa4d4d
++PKG_MD5SUM:=1ed28d02ad86050d1518023e354737b6
+ 
+ PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
+ PKG_SOURCE_URL:=https://downloads.open-mesh.org/batman/releases/batman-adv-$(PKG_VERSION)
+@@ -50,6 +50,7 @@ endef
+ PKG_EXTRA_KCONFIG:= \
+ 	CONFIG_BATMAN_ADV=m \
+ 	CONFIG_BATMAN_ADV_DEBUG=$(if $(CONFIG_KMOD_BATMAN_ADV_DEBUG_LOG),y,n) \
++	CONFIG_BATMAN_ADV_DEBUGFS=$(if $(CONFIG_KMOD_BATMAN_ADV_DEBUGFS),y,n) \
+ 	CONFIG_BATMAN_ADV_BLA=$(if $(CONFIG_KMOD_BATMAN_ADV_BLA),y,n) \
+ 	CONFIG_BATMAN_ADV_DAT=$(if $(CONFIG_KMOD_BATMAN_ADV_DAT),y,n) \
+ 	CONFIG_BATMAN_ADV_MCAST=$(if $(CONFIG_KMOD_BATMAN_ADV_MCAST),y,n) \
+diff --git a/batman-adv/files/compat-hacks.h b/batman-adv/files/compat-hacks.h
+index a7fc179..32903b5 100644
+--- a/batman-adv/files/compat-hacks.h
++++ b/batman-adv/files/compat-hacks.h
+@@ -97,3 +97,93 @@ static inline void batadv_netif_trans_update(struct net_device *dev)
+ }
+ 
+ #endif /* < KERNEL_VERSION(4, 7, 0) */
++
++
++#include_next <linux/netlink.h>
++
++#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 7, 0)
++
++#include_next <net/netlink.h>
++
++static inline bool batadv_nla_need_padding_for_64bit(struct sk_buff *skb);
++
++static inline int batadv_nla_align_64bit(struct sk_buff *skb, int padattr)
++{
++	if (batadv_nla_need_padding_for_64bit(skb) &&
++	    !nla_reserve(skb, padattr, 0))
++		return -EMSGSIZE;
++
++	return 0;
++}
++
++static inline struct nlattr *batadv__nla_reserve_64bit(struct sk_buff *skb,
++						       int attrtype,
++						       int attrlen, int padattr)
++{
++	if (batadv_nla_need_padding_for_64bit(skb))
++		batadv_nla_align_64bit(skb, padattr);
++
++	return __nla_reserve(skb, attrtype, attrlen);
++}
++
++static inline void batadv__nla_put_64bit(struct sk_buff *skb, int attrtype,
++					 int attrlen, const void *data,
++					 int padattr)
++{
++	struct nlattr *nla;
++
++	nla = batadv__nla_reserve_64bit(skb, attrtype, attrlen, padattr);
++	memcpy(nla_data(nla), data, attrlen);
++}
++
++static inline bool batadv_nla_need_padding_for_64bit(struct sk_buff *skb)
++{
++#ifndef CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS
++	/* The nlattr header is 4 bytes in size, that's why we test
++	 * if the skb->data _is_ aligned.  A NOP attribute, plus
++	 * nlattr header for next attribute, will make nla_data()
++	 * 8-byte aligned.
++	 */
++	if (IS_ALIGNED((unsigned long)skb_tail_pointer(skb), 8))
++		return true;
++#endif
++	return false;
++}
++
++static inline int batadv_nla_total_size_64bit(int payload)
++{
++	return NLA_ALIGN(nla_attr_size(payload))
++#ifndef CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS
++		+ NLA_ALIGN(nla_attr_size(0))
++#endif
++		;
++}
++
++static inline int batadv_nla_put_64bit(struct sk_buff *skb, int attrtype,
++				       int attrlen, const void *data,
++				       int padattr)
++{
++	size_t len;
++
++	if (batadv_nla_need_padding_for_64bit(skb))
++		len = batadv_nla_total_size_64bit(attrlen);
++	else
++		len = nla_total_size(attrlen);
++	if (unlikely(skb_tailroom(skb) < len))
++		return -EMSGSIZE;
++
++	batadv__nla_put_64bit(skb, attrtype, attrlen, data, padattr);
++	return 0;
++}
++
++#define nla_put_u64_64bit(_skb, _attrtype, _value, _padattr) \
++	batadv_nla_put_u64_64bit(_skb, _attrtype, _value, _padattr)
++static inline int batadv_nla_put_u64_64bit(struct sk_buff *skb, int attrtype,
++					   u64 value, int padattr)
++{
++	return batadv_nla_put_64bit(skb, attrtype, sizeof(u64), &value,
++				    padattr);
++}
++
++#endif /* < KERNEL_VERSION(4, 7, 0) */
++
+diff --git a/batman-adv/patches/0001-batman-adv-Modify-neigh_list-only-with-rcu-list-func.patch b/batman-adv/patches/0001-batman-adv-Modify-neigh_list-only-with-rcu-list-func.patch
+deleted file mode 100644
+index a30d80b..0000000
+--- a/batman-adv/patches/0001-batman-adv-Modify-neigh_list-only-with-rcu-list-func.patch
++++ /dev/null
+@@ -1,29 +0,0 @@
+-From: Sven Eckelmann <sven.eckelmann@open-mesh.com>
+-Date: Thu, 29 Sep 2016 17:22:58 +0200
+-Subject: [PATCH] batman-adv: Modify neigh_list only with rcu-list functions
+-
+-The batadv_hard_iface::neigh_list is accessed via rcu based primitives.
+-Thus all operations done on it have to fulfill the requirements by RCU. So
+-using non-RCU mechanisms like hlist_add_head is not allowed because it
+-misses the barriers required to protect concurrent readers when accessing
+-the data behind the pointer.
+-
+-Fixes: fed2826b490c ("batman-adv: add list of unique single hop neighbors per hard-interface")
+-Signed-off-by: Sven Eckelmann <sven.eckelmann@open-mesh.com>
+----
+- net/batman-adv/originator.c | 2 +-
+- 1 file changed, 1 insertion(+), 1 deletion(-)
+-
+-diff --git a/net/batman-adv/originator.c b/net/batman-adv/originator.c
+-index 3940b5d..3e9667e 100644
+---- a/net/batman-adv/originator.c
+-+++ b/net/batman-adv/originator.c
+-@@ -537,7 +537,7 @@ batadv_hardif_neigh_create(struct batadv_hard_iface *hard_iface,
+- 	if (bat_priv->algo_ops->neigh.hardif_init)
+- 		bat_priv->algo_ops->neigh.hardif_init(hardif_neigh);
+- 
+--	hlist_add_head(&hardif_neigh->list, &hard_iface->neigh_list);
+-+	hlist_add_head_rcu(&hardif_neigh->list, &hard_iface->neigh_list);
+- 
+- out:
+- 	spin_unlock_bh(&hard_iface->neigh_list_lock);

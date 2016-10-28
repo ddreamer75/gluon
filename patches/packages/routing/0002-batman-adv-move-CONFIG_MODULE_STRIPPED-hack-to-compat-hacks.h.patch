@@ -1,0 +1,48 @@
+From: Matthias Schiffer <mschiffer@universe-factory.net>
+Date: Mon, 8 Aug 2016 17:05:33 +0200
+Subject: batman-adv: move CONFIG_MODULE_STRIPPED hack to compat-hacks.h
+
+The CONFIG_MODULE_STRIPPED hack broke some time ago, as it is undefined too
+late (after the headers using it have been included by compat-hacks.h).
+
+Undefine CONFIG_MODULE_STRIPPED at the top of compat-hacks.h instead to
+make the module version available to batctl again.
+
+Signed-off-by: Matthias Schiffer <mschiffer@universe-factory.net>
+
+Origin: upstream, https://github.com/openwrt-routing/packages/commit/71f835fdeb2a7c37cdc3a5228e7ebc0e76efc8bd
+
+diff --git a/batman-adv/Makefile b/batman-adv/Makefile
+index 1668083..2a1335c 100644
+--- a/batman-adv/Makefile
++++ b/batman-adv/Makefile
+@@ -11,7 +11,7 @@ include $(TOPDIR)/rules.mk
+ PKG_NAME:=batman-adv
+ 
+ PKG_VERSION:=2016.2
+-PKG_RELEASE:=1
++PKG_RELEASE:=2
+ PKG_MD5SUM:=dd1ab664475902fc3dbf34998bbe5a90
+ 
+ PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
+@@ -83,8 +83,6 @@ endef
+ define Build/Prepare
+ 	$(call Build/Prepare/Default)
+ 	$(CP) ./files/compat-hacks.h $(PKG_BUILD_DIR)/
+-	$(SED) '/#define _NET_BATMAN_ADV_MAIN_H_/a\#undef CONFIG_MODULE_STRIPPED' \
+-		$(PKG_BUILD_DIR)/net/batman-adv/main.h
+ endef
+ 
+ define Build/Clean
+diff --git a/batman-adv/files/compat-hacks.h b/batman-adv/files/compat-hacks.h
+index a910c2d..cdf397d 100644
+--- a/batman-adv/files/compat-hacks.h
++++ b/batman-adv/files/compat-hacks.h
+@@ -1,5 +1,7 @@
+ /* Please avoid adding hacks here - instead add it to mac80211/backports.git */
+ 
++#undef CONFIG_MODULE_STRIPPED
++
+ #include <linux/version.h>	/* LINUX_VERSION_CODE */
+ #include <linux/types.h>
+ 
