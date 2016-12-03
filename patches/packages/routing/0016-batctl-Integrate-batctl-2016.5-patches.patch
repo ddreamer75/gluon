@@ -1,0 +1,5268 @@
+From: Sven Eckelmann <sven@narfation.org>
+Date: Sat, 3 Dec 2016 14:30:05 +0100
+Subject: batctl: Integrate batctl 2016.5 patches
+
+diff --git a/batctl/Makefile b/batctl/Makefile
+index 7ae81b5..b8c1080 100644
+--- a/batctl/Makefile
++++ b/batctl/Makefile
+@@ -25,7 +25,7 @@ define Package/batctl
+   URL:=https://www.open-mesh.org/
+   SECTION:=net
+   CATEGORY:=Network
+-  DEPENDS:=+kmod-batman-adv +libnl-tiny +libc
++  DEPENDS:=+kmod-batman-adv +libnl-tiny +libc +librt
+   TITLE:=B.A.T.M.A.N. Advanced user space configuration tool batctl
+   MAINTAINER:=Marek Lindner <mareklindner@neomailbox.ch>
+ endef
+diff --git a/batctl/patches/0001-batctl-Replace-list-implementation-with-linux-like-l.patch b/batctl/patches/0001-batctl-Replace-list-implementation-with-linux-like-l.patch
+new file mode 100644
+index 0000000..406f730
+--- /dev/null
++++ b/batctl/patches/0001-batctl-Replace-list-implementation-with-linux-like-l.patch
+@@ -0,0 +1,1373 @@
++From: Sven Eckelmann <sven@narfation.org>
++Date: Tue, 19 Jul 2016 22:44:08 +0200
++Subject: [PATCH] batctl: Replace list implementation with linux-like-list
++
++The list-batman implementation of linked lists has an interface which tries
++to resample the linux double linked list implementation but in reality is
++incompatible. This resulted in code which moves most of the pointer
++arithmetic back to the actual code. This is rather unfortunate because this
++abstraction should reduce the pointer arithmetic and not increase it.
++
++Also the incompatibilities between the list implementation used in
++batman-adv and the one used by batctl made coding features in both
++components error prone because each component required a slightly different
++implementation for the same list manipulation.
++
++Signed-off-by: Sven Eckelmann <sven@narfation.org>
++---
++ Makefile      |   1 -
++ bisect_iv.c   |  40 ++-
++ bisect_iv.h   |  10 +-
++ list-batman.c | 123 ---------
++ list-batman.h | 120 ---------
++ list.h        | 834 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
++ tcpdump.c     |   7 +-
++ tcpdump.h     |   2 +-
++ 8 files changed, 860 insertions(+), 277 deletions(-)
++ delete mode 100644 list-batman.c
++ delete mode 100644 list-batman.h
++ create mode 100644 list.h
++
++diff --git a/Makefile b/Makefile
++index 0cec413..87851e6 100755
++--- a/Makefile
+++++ b/Makefile
++@@ -31,7 +31,6 @@ OBJ += functions.o
++ OBJ += genl.o
++ OBJ += hash.o
++ OBJ += ioctl.o
++-OBJ += list-batman.o
++ OBJ += main.o
++ OBJ += netlink.o
++ OBJ += ping.o
++diff --git a/bisect_iv.c b/bisect_iv.c
++index 0f2c0cb..1cb79eb 100644
++--- a/bisect_iv.c
+++++ b/bisect_iv.c
++@@ -92,8 +92,8 @@ static struct bat_node *node_get(char *name)
++ 
++ 	strncpy(bat_node->name, name, NAME_LEN);
++ 	bat_node->name[NAME_LEN - 1] = '\0';
++-	INIT_LIST_HEAD_FIRST(bat_node->orig_event_list);
++-	INIT_LIST_HEAD_FIRST(bat_node->rt_table_list);
+++	INIT_LIST_HEAD(&bat_node->orig_event_list);
+++	INIT_LIST_HEAD(&bat_node->rt_table_list);
++ 	memset(bat_node->loop_magic, 0, sizeof(bat_node->loop_magic));
++ 	memset(bat_node->loop_magic2, 0, sizeof(bat_node->loop_magic2));
++ 	hash_add(node_hash, bat_node);
++@@ -112,9 +112,8 @@ static struct orig_event *orig_event_new(struct bat_node *bat_node, struct bat_n
++ 		return NULL;
++ 	}
++ 
++-	INIT_LIST_HEAD(&orig_event->list);
++-	INIT_LIST_HEAD_FIRST(orig_event->event_list);
++-	INIT_LIST_HEAD_FIRST(orig_event->rt_hist_list);
+++	INIT_LIST_HEAD(&orig_event->event_list);
+++	INIT_LIST_HEAD(&orig_event->rt_hist_list);
++ 	orig_event->orig_node = orig_node;
++ 	list_add_tail(&orig_event->list, &bat_node->orig_event_list);
++ 
++@@ -166,21 +165,21 @@ static void node_free(void *data)
++ 
++ 	list_for_each_entry_safe(orig_event, orig_event_tmp, &bat_node->orig_event_list, list) {
++ 		list_for_each_entry_safe(seqno_event, seqno_event_tmp, &orig_event->event_list, list) {
++-			list_del((struct list_head *)&orig_event->event_list, &seqno_event->list, &orig_event->event_list);
+++			list_del(&seqno_event->list);
++ 			free(seqno_event);
++ 		}
++ 
++ 		list_for_each_entry_safe(rt_hist, rt_hist_tmp, &orig_event->rt_hist_list, list) {
++-			list_del((struct list_head *)&orig_event->rt_hist_list, &rt_hist->list, &orig_event->rt_hist_list);
+++			list_del(&rt_hist->list);
++ 			free(rt_hist);
++ 		}
++ 
++-		list_del((struct list_head *)&bat_node->orig_event_list, &orig_event->list, &bat_node->orig_event_list);
+++		list_del(&orig_event->list);
++ 		free(orig_event);
++ 	}
++ 
++ 	list_for_each_entry_safe(rt_table, rt_table_tmp, &bat_node->rt_table_list, list) {
++-		list_del((struct list_head *)&bat_node->rt_table_list, &rt_table->list, &bat_node->rt_table_list);
+++		list_del(&rt_table->list);
++ 
++ 		free(rt_table->entries);
++ 		free(rt_table);
++@@ -248,10 +247,8 @@ static int routing_table_new(char *orig, char *next_hop, char *old_next_hop, cha
++ 		goto table_free;
++ 	}
++ 
++-	INIT_LIST_HEAD(&rt_table->list);
++ 	rt_table->num_entries = 1;
++ 
++-	INIT_LIST_HEAD(&rt_hist->list);
++ 	rt_hist->prev_rt_hist = NULL;
++ 	rt_hist->next_hop = next_hop_node;
++ 	rt_hist->flags = rt_flag;
++@@ -310,7 +307,6 @@ static int routing_table_new(char *orig, char *next_hop, char *old_next_hop, cha
++ 				goto rt_hist_free;
++ 			}
++ 
++-			INIT_LIST_HEAD(&seqno_event->list);
++ 			seqno_event->orig = node_get(orig);
++ 			seqno_event->neigh = NULL;
++ 			seqno_event->prev_sender = NULL;
++@@ -449,7 +445,6 @@ static int seqno_event_new(char *iface_addr, char *orig, char *prev_sender, char
++ 		goto err;
++ 	}
++ 
++-	INIT_LIST_HEAD(&seqno_event->list);
++ 	seqno_event->orig = orig_node;
++ 	seqno_event->neigh = neigh_node;
++ 	seqno_event->prev_sender = prev_sender_node;
++@@ -986,7 +981,7 @@ static void seqno_trace_print_neigh(struct seqno_trace_neigh *seqno_trace_neigh,
++ 	}
++ }
++ 
++-static void seqno_trace_print(struct list_head_first *trace_list, char *trace_orig,
+++static void seqno_trace_print(struct list_head *trace_list, char *trace_orig,
++                               long long seqno_min, long long seqno_max, char *filter_orig, int read_opt)
++ {
++ 	struct seqno_trace *seqno_trace;
++@@ -1180,7 +1175,6 @@ static struct seqno_trace *seqno_trace_new(struct seqno_event *seqno_event)
++ 		return NULL;
++ 	}
++ 
++-	INIT_LIST_HEAD(&seqno_trace->list);
++ 	seqno_trace->seqno = seqno_event->seqno;
++ 	seqno_trace->print = 0;
++ 
++@@ -1199,7 +1193,7 @@ static void seqno_trace_free(struct seqno_trace *seqno_trace)
++ 	free(seqno_trace);
++ }
++ 
++-static int seqno_trace_add(struct list_head_first *trace_list, struct bat_node *bat_node,
+++static int seqno_trace_add(struct list_head *trace_list, struct bat_node *bat_node,
++ 		           struct seqno_event *seqno_event, char print_trace)
++ {
++ 	struct seqno_trace *seqno_trace = NULL, *seqno_trace_tmp = NULL, *seqno_trace_prev = NULL;
++@@ -1223,12 +1217,12 @@ static int seqno_trace_add(struct list_head_first *trace_list, struct bat_node *
++ 			goto err;
++ 
++ 		if ((list_empty(trace_list)) ||
++-		    (seqno_event->seqno > ((struct seqno_trace *)trace_list->prev)->seqno))
+++		    (seqno_event->seqno > list_last_entry(trace_list, struct seqno_trace, list)->seqno))
++ 			list_add_tail(&seqno_trace->list, trace_list);
++-		else if (seqno_event->seqno < ((struct seqno_trace *)trace_list->next)->seqno)
++-			list_add_before((struct list_head *)trace_list, trace_list->next, &seqno_trace->list);
+++		else if (seqno_event->seqno < list_first_entry(trace_list, struct seqno_trace, list)->seqno)
+++			list_add(&seqno_trace->list, trace_list);
++ 		else
++-			list_add_before(&seqno_trace_prev->list, &seqno_trace_tmp->list, &seqno_trace->list);
+++			list_add_behind(&seqno_trace->list, &seqno_trace_prev->list);
++ 	}
++ 
++ 	if (print_trace)
++@@ -1260,14 +1254,14 @@ static void trace_seqnos(char *trace_orig, long long seqno_min, long long seqno_
++ 	struct orig_event *orig_event;
++ 	struct seqno_event *seqno_event;
++ 	struct hash_it_t *hashit = NULL;
++-	struct list_head_first trace_list;
+++	struct list_head trace_list;
++ 	struct seqno_trace *seqno_trace, *seqno_trace_tmp;
++ 	char check_orig[NAME_LEN], print_trace;
++ 	int res;
++ 
++ 	/* if no option was given filter_orig is empty */
++ 	memset(check_orig, 0, NAME_LEN);
++-	INIT_LIST_HEAD_FIRST(trace_list);
+++	INIT_LIST_HEAD(&trace_list);
++ 
++ 	while (NULL != (hashit = hash_iterate(node_hash, hashit))) {
++ 		bat_node = hashit->bucket->data;
++@@ -1313,7 +1307,7 @@ static void trace_seqnos(char *trace_orig, long long seqno_min, long long seqno_
++ 
++ out:
++ 	list_for_each_entry_safe(seqno_trace, seqno_trace_tmp, &trace_list, list) {
++-		list_del((struct list_head *)&trace_list, &seqno_trace->list, &trace_list);
+++		list_del(&seqno_trace->list);
++ 		seqno_trace_free(seqno_trace);
++ 	}
++ 
++diff --git a/bisect_iv.h b/bisect_iv.h
++index ace76c7..43aa80b 100644
++--- a/bisect_iv.h
+++++ b/bisect_iv.h
++@@ -22,7 +22,7 @@
++ #ifndef _BATCTL_BISECT_IV_H
++ #define _BATCTL_BISECT_IV_H
++ 
++-#include "list-batman.h"
+++#include "list.h"
++ 
++ #define NAME_LEN 18
++ #define MAX_LINE 256
++@@ -38,8 +38,8 @@ int bisect_iv(int argc, char **argv);
++ 
++ struct bat_node {
++ 	char name[NAME_LEN];
++-	struct list_head_first orig_event_list;
++-	struct list_head_first rt_table_list;
+++	struct list_head orig_event_list;
+++	struct list_head rt_table_list;
++ 	char loop_magic[LOOP_MAGIC_LEN];
++ 	char loop_magic2[LOOP_MAGIC_LEN];
++ };
++@@ -47,8 +47,8 @@ struct bat_node {
++ struct orig_event {
++ 	struct list_head list;
++ 	struct bat_node *orig_node;
++-	struct list_head_first event_list;
++-	struct list_head_first rt_hist_list;
+++	struct list_head event_list;
+++	struct list_head rt_hist_list;
++ };
++ 
++ struct rt_table {
++diff --git a/list-batman.c b/list-batman.c
++deleted file mode 100644
++index affedb6..0000000
++--- a/list-batman.c
+++++ /dev/null
++@@ -1,123 +0,0 @@
++-/* 
++- * Copyright (C) 2006-2016  B.A.T.M.A.N. contributors:
++- *
++- * Marek Lindner
++- *
++- * This program is free software; you can redistribute it and/or
++- * modify it under the terms of version 2 of the GNU General Public
++- * License as published by the Free Software Foundation.
++- *
++- * This program is distributed in the hope that it will be useful, but
++- * WITHOUT ANY WARRANTY; without even the implied warranty of
++- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
++- * General Public License for more details.
++- *
++- * You should have received a copy of the GNU General Public License
++- * along with this program; if not, write to the Free Software
++- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
++- * 02110-1301, USA
++- *
++- */
++-
++-
++-
++-#include "list-batman.h"
++-
++-
++-
++-/*
++- * Insert a new entry between two known consecutive entries.
++- *
++- * This is only for internal list manipulation where we know
++- * the next entries already!
++- */
++-static void __list_add( struct list_head *new, struct list_head *prev, struct list_head *next ) {
++-
++-	new->next = next;
++-	prev->next = new;
++-
++-}
++-
++-/**
++- * list_add - add a new entry
++- * @new: new entry to be added
++- * @head: list head to add it after
++- *
++- * Insert a new entry after the specified head.
++- * This is good for implementing stacks.
++- */
++-void list_add( struct list_head *new, struct list_head_first *head ) {
++-
++-	__list_add( new, (struct list_head *)head, head->next );
++-
++-	if ( head->prev == (struct list_head *)head )
++-		head->prev = new;
++-
++-}
++-
++-/**
++- * list_add_tail - add a new entry
++- * @new: new entry to be added
++- * @head: list head to add it before
++- *
++- * Insert a new entry before the specified head.
++- * This is useful for implementing queues.
++- */
++-void list_add_tail( struct list_head *new, struct list_head_first *head ) {
++-
++-	__list_add( new, head->prev, (struct list_head *)head );
++-
++-	head->prev = new;
++-
++-}
++-
++-void list_add_before( struct list_head *prev_node, struct list_head *next_node, struct list_head *new_node ) {
++-
++-	prev_node->next = new_node;
++-	new_node->next = next_node;
++-
++-}
++-
++-
++-
++-/*
++- * Delete a list entry by making the next entries
++- * point to each other.
++- *
++- * This is only for internal list manipulation where we know
++- * the next entries already!
++- */
++-static void __list_del( struct list_head *prev, struct list_head *next ) {
++-
++-	prev->next = next;
++-
++-}
++-
++-/**
++- * list_del - deletes entry from list.
++- * @entry: the element to delete from the list.
++- * Note: list_empty on entry does not return true after this, the entry is in an undefined state.
++- */
++-void list_del( struct list_head *prev_entry, struct list_head *entry, struct list_head_first *head ) {
++-
++-	if ( head->prev == entry )
++-		head->prev = prev_entry;
++-
++-	__list_del( prev_entry, entry->next );
++-
++-	entry->next = (void *) 0;
++-
++-}
++-
++-
++-
++-/**
++- * list_empty - tests whether a list is empty
++- * @head: the list to test.
++- */
++-int list_empty( struct list_head_first *head ) {
++-
++-	return head->next == (struct list_head *)head;
++-
++-}
++-
++diff --git a/list-batman.h b/list-batman.h
++deleted file mode 100644
++index 53b8413..0000000
++--- a/list-batman.h
+++++ /dev/null
++@@ -1,120 +0,0 @@
++-/*
++- * Copyright (C) 2006-2016  B.A.T.M.A.N. contributors:
++- *
++- * Marek Lindner
++- *
++- * This program is free software; you can redistribute it and/or
++- * modify it under the terms of version 2 of the GNU General Public
++- * License as published by the Free Software Foundation.
++- *
++- * This program is distributed in the hope that it will be useful, but
++- * WITHOUT ANY WARRANTY; without even the implied warranty of
++- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
++- * General Public License for more details.
++- *
++- * You should have received a copy of the GNU General Public License
++- * along with this program; if not, write to the Free Software
++- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
++- * 02110-1301, USA
++- *
++- */
++-
++-#ifndef _LINUX_LIST_H
++-#define _LINUX_LIST_H
++-
++-/*
++- * XXX: Resolve conflict between this file and <sys/queue.h> on BSD systems.
++- */
++-#ifdef LIST_HEAD
++-#undef LIST_HEAD
++-#endif
++-
++-/*
++- * Simple linked list implementation.
++- *
++- * Some of the internal functions ("__xxx") are useful when
++- * manipulating whole lists rather than single entries, as
++- * sometimes we already know the next entries and we can
++- * generate better code by using them directly rather than
++- * using the generic single-entry routines.
++- */
++-
++-struct list_head {
++-	struct list_head *next;
++-};
++-
++-struct list_head_first {
++-	struct list_head *next, *prev;
++-};
++-
++-
++-void list_add( struct list_head *new, struct list_head_first *head );
++-void list_add_tail( struct list_head *new, struct list_head_first *head );
++-void list_add_before( struct list_head *prev_node, struct list_head *next_node, struct list_head *new_node );
++-void list_del( struct list_head *prev_entry, struct list_head *entry, struct list_head_first *head );
++-int list_empty( struct list_head_first *head );
++-
++-
++-
++-#define INIT_LIST_HEAD(ptr) do { \
++-	(ptr)->next = (ptr); \
++-} while (0)
++-
++-#define INIT_LIST_HEAD_FIRST(ptr) \
++-	ptr.next = (struct list_head *)&ptr; ptr.prev = (struct list_head *)&ptr; \
++-
++-
++-/**
++- * list_entry - get the struct for this entry
++- * @ptr:	the &struct list_head pointer.
++- * @type:	the type of the struct this is embedded in.
++- * @member:	the name of the list_struct within the struct.
++- */
++-#define list_entry(ptr, type, member) \
++-	((type *)((char *)(ptr)-(unsigned long)(&((type *)0)->member)))
++-
++-/**
++- * list_for_each	-	iterate over a list
++- * @pos:	the &struct list_head to use as a loop counter.
++- * @head:	the head for your list.
++- */
++-#define list_for_each(pos, head) \
++-	for (pos = (head)->next; pos != (struct list_head *)(head); \
++-        	pos = pos->next)
++-
++-/**
++- * list_for_each_safe	-	iterate over a list safe against removal of list entry
++- * @pos:	the &struct list_head to use as a loop counter.
++- * @n:		another &struct list_head to use as temporary storage
++- * @head:	the head for your list.
++- */
++-#define list_for_each_safe(pos, n, head) \
++-	for (pos = (head)->next, n = pos->next; pos != (struct list_head *)(head); \
++-		pos = n, n = pos->next)
++-
++-/**
++- * list_for_each_entry  -       iterate over list of given type
++- * @pos:        the type * to use as a loop counter.
++- * @head:       the head for your list.
++- * @member:     the name of the list_struct within the struct.
++- */
++-#define list_for_each_entry(pos, head, member)                          \
++-        for (pos = list_entry((head)->next, typeof(*pos), member);      \
++-             &pos->member != (struct list_head *)(head);                \
++-             pos = list_entry(pos->member.next, typeof(*pos), member))
++-
++-/**
++- * list_for_each_entry_safe - iterate over list of given type safe against removal of list entry
++- * @pos:        the type * to use as a loop counter.
++- * @n:          another type * to use as temporary storage
++- * @head:       the head for your list.
++- * @member:     the name of the list_struct within the struct.
++- */
++-#define list_for_each_entry_safe(pos, n, head, member)                  \
++-        for (pos = list_entry((head)->next, typeof(*pos), member),      \
++-                n = list_entry(pos->member.next, typeof(*pos), member); \
++-             &pos->member != (struct list_head *)(head);                \
++-             pos = n, n = list_entry(n->member.next, typeof(*n), member))
++-
++-
++-#endif
++diff --git a/list.h b/list.h
++new file mode 100644
++index 0000000..41feaa0
++--- /dev/null
+++++ b/list.h
++@@ -0,0 +1,834 @@
+++/* Minimal Linux-like double-linked list helper functions
+++ *
+++ * Copyright (c) 2012-2016, Sven Eckelmann <sven@narfation.org>
+++ *
+++ * Permission is hereby granted, free of charge, to any person obtaining a copy
+++ * of this software and associated documentation files (the "Software"), to deal
+++ * in the Software without restriction, including without limitation the rights
+++ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+++ * copies of the Software, and to permit persons to whom the Software is
+++ * furnished to do so, subject to the following conditions:
+++ *
+++ * The above copyright notice and this permission notice shall be included in
+++ * all copies or substantial portions of the Software.
+++ *
+++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+++ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+++ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+++ * THE SOFTWARE.
+++ */
+++
+++#ifndef __LINUX_LIKE_LIST_H__
+++#define __LINUX_LIKE_LIST_H__
+++
+++#ifdef __cplusplus
+++extern "C" {
+++#endif
+++
+++#include <stddef.h>
+++
+++#if defined(__GNUC__)
+++#define  LIST_TYPEOF_USE 1
+++#endif
+++
+++#if defined(_MSC_VER)
+++#define __inline__ __inline
+++#endif
+++
+++/**
+++ * container_of() - Calculate address of object that contains address ptr
+++ * @ptr: pointer to member variable
+++ * @type: type of the structure containing ptr
+++ * @member: name of the member variable in struct @type
+++ *
+++ * Return: @type pointer of object containing ptr
+++ */
+++#ifndef container_of
+++#ifdef LIST_TYPEOF_USE
+++#define container_of(ptr, type, member) __extension__ ({ \
+++	const __typeof__(((type *)0)->member) *__pmember = (ptr); \
+++	(type *)((char *)__pmember - offsetof(type, member)); })
+++#else
+++#define container_of(ptr, type, member) \
+++	((type *)((char *)(ptr) - offsetof(type, member)))
+++#endif
+++#endif
+++
+++/**
+++ * struct list_head - Head and node of a double-linked list
+++ * @prev: pointer to the previous node in the list
+++ * @next: pointer to the next node in the list
+++ *
+++ * The simple double-linked list consists of a head and nodes attached to
+++ * this head. Both node and head share the same struct type. The list_*
+++ * functions and macros can be used to access and modify this data structure.
+++ *
+++ * The @prev pointer of the list head points to the last list node of the
+++ * list and @next points to the first list node of the list. For an empty list,
+++ * both member variables point to the head.
+++ *
+++ * The list nodes are usually embedded in a container structure which holds the
+++ * actual data. Such an container object is called entry. The helper list_entry
+++ * can be used to calculate the object address from the address of the node.
+++ */
+++struct list_head {
+++	struct list_head *prev;
+++	struct list_head *next;
+++};
+++
+++/**
+++ * LIST_HEAD - Declare list head and initialize it
+++ * @head: name of the new object
+++ */
+++#define LIST_HEAD(head) \
+++	struct list_head head = { &(head), &(head) }
+++
+++/**
+++ * INIT_LIST_HEAD() - Initialize empty list head
+++ * @head: pointer to list head
+++ *
+++ * This can also be used to initialize a unlinked list node.
+++ *
+++ * A node is usually linked inside a list, will be added to a list in
+++ * the near future or the entry containing the node will be free'd soon.
+++ *
+++ * But an unlinked node may be given to a function which uses list_del(_init)
+++ * before it ends up in a previously mentioned state. The list_del(_init) on an
+++ * initialized node is well defined and safe. But the result of a
+++ * list_del(_init) on an uninitialized node is undefined (unrelated memory is
+++ * modified, crashes, ...).
+++ */
+++static __inline__ void INIT_LIST_HEAD(struct list_head *head)
+++{
+++	head->next = head;
+++	head->prev = head;
+++}
+++
+++/**
+++ * list_add() - Add a list node to the beginning of the list
+++ * @node: pointer to the new node
+++ * @head: pointer to the head of the list
+++ */
+++static __inline__ void list_add(struct list_head *node,
+++				struct list_head *head)
+++{
+++	struct list_head *next = head->next;
+++
+++	next->prev = node;
+++	node->next = next;
+++	node->prev = head;
+++	head->next = node;
+++}
+++
+++/**
+++ * list_add_tail() - Add a list node to the end of the list
+++ * @node: pointer to the new node
+++ * @head: pointer to the head of the list
+++ */
+++static __inline__ void list_add_tail(struct list_head *node,
+++				     struct list_head *head)
+++{
+++	struct list_head *prev = head->prev;
+++
+++	prev->next = node;
+++	node->next = head;
+++	node->prev = prev;
+++	head->prev = node;
+++}
+++
+++/**
+++ * list_add_before() - Add a list node before another node to the list
+++ * @new_node: pointer to the new node
+++ * @node: pointer to the reference node in the list
+++ *
+++ * WARNING this functionality is not available in the Linux list implementation
+++ */
+++#define list_add_before(new_node, node) \
+++	list_add_tail(new_node, node)
+++
+++/**
+++ * list_add_behind() - Add a list node behind another node to the list
+++ * @new_node: pointer to the new node
+++ * @node: pointer to the reference node in the list
+++ *
+++ * WARNING this functionality is not available in the Linux list implementation
+++ */
+++#define list_add_behind(new_node, node) \
+++	list_add(new_node, node)
+++
+++/**
+++ * list_del() - Remove a list node from the list
+++ * @node: pointer to the node
+++ *
+++ * The node is only removed from the list. Neither the memory of the removed
+++ * node nor the memory of the entry containing the node is free'd. The node
+++ * has to be handled like an uninitialized node. Accessing the next or prev
+++ * pointer of the node is not safe.
+++ *
+++ * Unlinked, initialized nodes are also uninitialized after list_del.
+++ *
+++ * LIST_POISONING can be enabled during build-time to provoke an invalid memory
+++ * access when the memory behind the next/prev pointer is used after a list_del.
+++ * This only works on systems which prohibit access to the predefined memory
+++ * addresses.
+++ */
+++static __inline__ void list_del(struct list_head *node)
+++{
+++	struct list_head *next = node->next;
+++	struct list_head *prev = node->prev;
+++
+++	next->prev = prev;
+++	prev->next = next;
+++
+++#ifdef LIST_POISONING
+++	node->prev = (struct list_head *)(0x00100100);
+++	node->next = (struct list_head *)(0x00200200);
+++#endif
+++}
+++
+++/**
+++ * list_del_init() - Remove a list node from the list and reinitialize it
+++ * @node: pointer to the node
+++ *
+++ * The removed node will not end up in an uninitialized state like when using
+++ * list_del. Instead the node is initialized again to the unlinked state.
+++ */
+++static __inline__ void list_del_init(struct list_head *node)
+++{
+++	list_del(node);
+++	INIT_LIST_HEAD(node);
+++}
+++
+++/**
+++ * list_empty() - Check if list head has no nodes attached
+++ * @head: pointer to the head of the list
+++ *
+++ * Return: 0 - list is not empty !0 - list is empty
+++ */
+++static __inline__ int list_empty(const struct list_head *head)
+++{
+++	return (head->next == head);
+++}
+++
+++/**
+++ * list_is_singular() - Check if list head has exactly one node attached
+++ * @head: pointer to the head of the list
+++ *
+++ * Return: 0 - list is not singular !0 -list has exactly one entry
+++ */
+++static __inline__ int list_is_singular(const struct list_head *head)
+++{
+++	return (!list_empty(head) && head->prev == head->next);
+++}
+++
+++/**
+++ * list_splice() - Add list nodes from a list to beginning of another list
+++ * @list: pointer to the head of the list with the node entries
+++ * @head: pointer to the head of the list
+++ *
+++ * All nodes from @list are added to to the beginning of the list of @head.
+++ * It is similar to list_add but for multiple nodes. The @list head is not
+++ * modified and has to be initialized to be used as a valid list head/node
+++ * again.
+++ */
+++static __inline__ void list_splice(struct list_head *list,
+++				   struct list_head *head)
+++{
+++	struct list_head *head_first = head->next;
+++	struct list_head *list_first = list->next;
+++	struct list_head *list_last = list->prev;
+++
+++	if (list_empty(list))
+++		return;
+++
+++	head->next = list_first;
+++	list_first->prev = head;
+++
+++	list_last->next = head_first;
+++	head_first->prev = list_last;
+++}
+++
+++/**
+++ * list_splice_tail() - Add list nodes from a list to end of another list
+++ * @list: pointer to the head of the list with the node entries
+++ * @head: pointer to the head of the list
+++ *
+++ * All nodes from @list are added to to the end of the list of @head.
+++ * It is similar to list_add_tail but for multiple nodes. The @list head is not
+++ * modified and has to be initialized to be used as a valid list head/node
+++ * again.
+++ */
+++static __inline__ void list_splice_tail(struct list_head *list,
+++					struct list_head *head)
+++{
+++	struct list_head *head_last = head->prev;
+++	struct list_head *list_first = list->next;
+++	struct list_head *list_last = list->prev;
+++
+++	if (list_empty(list))
+++		return;
+++
+++	head->prev = list_last;
+++	list_last->next = head;
+++
+++	list_first->prev = head_last;
+++	head_last->next = list_first;
+++}
+++
+++/**
+++ * list_splice_init() - Move list nodes from a list to beginning of another list
+++ * @list: pointer to the head of the list with the node entries
+++ * @head: pointer to the head of the list
+++ *
+++ * All nodes from @list are added to to the beginning of the list of @head.
+++ * It is similar to list_add but for multiple nodes.
+++ *
+++ * The @list head will not end up in an uninitialized state like when using
+++ * list_splice. Instead the @list is initialized again to the an empty
+++ * list/unlinked state.
+++ */
+++static __inline__ void list_splice_init(struct list_head *list,
+++					struct list_head *head)
+++{
+++	list_splice(list, head);
+++	INIT_LIST_HEAD(list);
+++}
+++
+++/**
+++ * list_splice_tail_init() - Move list nodes from a list to end of another list
+++ * @list: pointer to the head of the list with the node entries
+++ * @head: pointer to the head of the list
+++ *
+++ * All nodes from @list are added to to the end of the list of @head.
+++ * It is similar to list_add_tail but for multiple nodes.
+++ *
+++ * The @list head will not end up in an uninitialized state like when using
+++ * list_splice. Instead the @list is initialized again to the an empty
+++ * list/unlinked state.
+++ */
+++static __inline__ void list_splice_tail_init(struct list_head *list,
+++					     struct list_head *head)
+++{
+++	list_splice_tail(list, head);
+++	INIT_LIST_HEAD(list);
+++}
+++
+++/**
+++ * list_cut_position() - Move beginning of a list to another list
+++ * @head_to: pointer to the head of the list which receives nodes
+++ * @head_from: pointer to the head of the list
+++ * @node: pointer to the node in which defines the cutting point
+++ *
+++ * All entries from the beginning of the list @head_from to (including) the
+++ * @node is moved to @head_from.
+++ *
+++ * @head_to is replaced when @head_from is not empty. @node must be a real
+++ * list node from @head_from or the behavior is undefined.
+++ */
+++static __inline__ void list_cut_position(struct list_head *head_to,
+++					 struct list_head *head_from,
+++					 struct list_head *node)
+++{
+++	struct list_head *head_from_first = head_from->next;
+++
+++	if (list_empty(head_from))
+++		return;
+++
+++	if (head_from == node) {
+++		INIT_LIST_HEAD(head_to);
+++		return;
+++	}
+++
+++	head_from->next = node->next;
+++	head_from->next->prev = head_from;
+++
+++	head_to->prev = node;
+++	node->next = head_to;
+++	head_to->next = head_from_first;
+++	head_to->next->prev = head_to;
+++}
+++
+++/**
+++ * list_move() - Move a list node to the beginning of the list
+++ * @node: pointer to the node
+++ * @head: pointer to the head of the list
+++ *
+++ * The @node is removed from its old position/node and add to the beginning of
+++ * @head
+++ */
+++static __inline__ void list_move(struct list_head *node, struct list_head *head)
+++{
+++	list_del(node);
+++	list_add(node, head);
+++}
+++
+++/**
+++ * list_move_tail() - Move a list node to the end of the list
+++ * @node: pointer to the node
+++ * @head: pointer to the head of the list
+++ *
+++ * The @node is removed from its old position/node and add to the end of @head
+++ */
+++static __inline__ void list_move_tail(struct list_head *node,
+++				      struct list_head *head)
+++{
+++	list_del(node);
+++	list_add_tail(node, head);
+++}
+++
+++/**
+++ * list_entry() - Calculate address of entry that contains list node
+++ * @node: pointer to list node
+++ * @type: type of the entry containing the list node
+++ * @member: name of the list_head member variable in struct @type
+++ *
+++ * Return: @type pointer of entry containing node
+++ */
+++#define list_entry(node, type, member) container_of(node, type, member)
+++
+++/**
+++ * list_first_entry() - get first entry of the list
+++ * @head: pointer to the head of the list
+++ * @type: type of the entry containing the list node
+++ * @member: name of the list_head member variable in struct @type
+++ *
+++ * Return: @type pointer of first entry in list
+++ */
+++#define list_first_entry(head, type, member) \
+++	list_entry((head)->next, type, member)
+++
+++/**
+++ * list_last_entry() - get last entry of the list
+++ * @head: pointer to the head of the list
+++ * @type: type of the entry containing the list node
+++ * @member: name of the list_head member variable in struct @type
+++ *
+++ * Return: @type pointer of last entry in list
+++ */
+++#define list_last_entry(head, type, member) \
+++	list_entry((head)->prev, type, member)
+++
+++/**
+++ * list_for_each - iterate over list nodes
+++ * @node: list_head pointer used as iterator
+++ * @head: pointer to the head of the list
+++ *
+++ * The nodes and the head of the list must must be kept unmodified while
+++ * iterating through it. Any modifications to the the list will cause undefined
+++ * behavior.
+++ */
+++#define list_for_each(node, head) \
+++	for (node = (head)->next; \
+++	     node != (head); \
+++	     node = node->next)
+++
+++/**
+++ * list_for_each_entry_t - iterate over list entries
+++ * @entry: @type pointer used as iterator
+++ * @head: pointer to the head of the list
+++ * @type: type of the entries containing the list nodes
+++ * @member: name of the list_head member variable in struct @type
+++ *
+++ * The nodes and the head of the list must must be kept unmodified while
+++ * iterating through it. Any modifications to the the list will cause undefined
+++ * behavior.
+++ *
+++ * WARNING this functionality is not available in the Linux list implementation
+++ */
+++#define list_for_each_entry_t(entry, head, type, member) \
+++	for (entry = list_entry((head)->next, type, member); \
+++	     &entry->member != (head); \
+++	     entry = list_entry(entry->member.next, type, member))
+++
+++/**
+++ * list_for_each_entry - iterate over list entries
+++ * @entry: pointer used as iterator
+++ * @head: pointer to the head of the list
+++ * @member: name of the list_head member variable in struct type of @entry
+++ *
+++ * The nodes and the head of the list must must be kept unmodified while
+++ * iterating through it. Any modifications to the the list will cause undefined
+++ * behavior.
+++ */
+++#ifdef LIST_TYPEOF_USE
+++#define list_for_each_entry(entry, head, member) \
+++	list_for_each_entry_t(entry, head, __typeof__(*entry), member)
+++#endif
+++
+++/**
+++ * list_for_each_safe - iterate over list nodes and allow deletes
+++ * @node: list_head pointer used as iterator
+++ * @safe: list_head pointer used to store info for next entry in list
+++ * @head: pointer to the head of the list
+++ *
+++ * The current node (iterator) is allowed to be removed from the list. Any
+++ * other modifications to the the list will cause undefined behavior.
+++ */
+++#define list_for_each_safe(node, safe, head) \
+++	for (node = (head)->next, safe = node->next; \
+++	     node != (head); \
+++	     node = safe, safe = node->next)
+++
+++/**
+++ * list_for_each_entry_safe_t - iterate over list entries and allow deletes
+++ * @entry: @type pointer used as iterator
+++ * @safe: @type pointer used to store info for next entry in list
+++ * @head: pointer to the head of the list
+++ * @type: type of the entries containing the list nodes
+++ * @member: name of the list_head member variable in struct @type
+++ *
+++ * The current node (iterator) is allowed to be removed from the list. Any
+++ * other modifications to the the list will cause undefined behavior.
+++ *
+++ * WARNING this functionality is not available in the Linux list implementation
+++ */
+++#define list_for_each_entry_safe_t(entry, safe, head, type, member) \
+++	for (entry = list_entry((head)->next, type, member), \
+++	     safe = list_entry(entry->member.next, type, member); \
+++	     &entry->member != (head); \
+++	     entry = safe, \
+++	     safe = list_entry(safe->member.next, type, member))
+++
+++/**
+++ * list_for_each_entry_safe - iterate over list entries and allow deletes
+++ * @entry: pointer used as iterator
+++ * @safe: @type pointer used to store info for next entry in list
+++ * @head: pointer to the head of the list
+++ * @member: name of the list_head member variable in struct type of @entry
+++ *
+++ * The current node (iterator) is allowed to be removed from the list. Any
+++ * other modifications to the the list will cause undefined behavior.
+++ */
+++#ifdef LIST_TYPEOF_USE
+++#define list_for_each_entry_safe(entry, safe, head, member) \
+++	list_for_each_entry_safe_t(entry, safe, head, __typeof__(*entry), \
+++				   member)
+++#endif
+++
+++/**
+++ * struct hlist_node - Node of a double-linked list with single pointer head
+++ * @next: pointer to the next node in the list
+++ * @pprev: pointer to @next of the previous node in the hlist
+++ *
+++ * The double-linked list with single pointer head consists of a head and nodes
+++ * attached to this head. The hlist_* functions and macros can be used to access
+++ * and modify this data structure.
+++ *
+++ * The @pprev pointer is used to find the previous node (or head) in the list
+++ * when doing hlist_del operations
+++ *
+++ * The hlist nodes are usually embedded in a container structure which holds the
+++ * actual data. Such an container object is called entry. The helper hlist_entry
+++ * can be used to calculate the object address from the address of the node.
+++ */
+++struct hlist_node {
+++	struct hlist_node *next;
+++	struct hlist_node **pprev;
+++};
+++
+++/**
+++ * struct hlist_head - Head of a double-linked list with single pointer head
+++ * @first: pointer to the first node in the hlist
+++ *
+++ * The hlist doesn't have a pointer to the last node. This makes it harder to
+++ * access or modify the tail of the list. But the single pointer to the first
+++ * entry makes it well suited for implementation of hash tables because it
+++ * cuts the size cost of the head pointers by half compared to the list_head.
+++ */
+++struct hlist_head {
+++	struct hlist_node *first;
+++};
+++
+++/**
+++ * HLIST_HEAD - Declare hlist head and initialize it
+++ * @head: name of the new object
+++ */
+++#define HLIST_HEAD(head) \
+++	struct hlist_head head = { NULL }
+++
+++/**
+++ * INIT_HLIST_HEAD() - Initialize empty hlist head
+++ * @head: pointer to hlist head
+++ */
+++static __inline__ void INIT_HLIST_HEAD(struct hlist_head *head)
+++{
+++	head->first = NULL;
+++}
+++
+++/**
+++ * INIT_HLIST_NODE() - Initialize unhashed hlist node
+++ * @node: pointer to hlist node
+++ *
+++ * A hlist_node is usually linked inside a hlist, will be added to a hlist in
+++ * the near future or the entry containing the node will be free'd soon.
+++ *
+++ * But an unlinked node may be given to a function which uses hlist_del(_init)
+++ * before it ends up in a previously mentioned state. The hlist_del(_init) on an
+++ * initialized node is well defined and safe. But the result of a
+++ * hlist_del(_init) on an uninitialized node is undefined (unrelated memory is
+++ * modified, crashes, ...).
+++ */
+++static __inline__ void INIT_HLIST_NODE(struct hlist_node *node)
+++{
+++	node->next = NULL;
+++	node->pprev = NULL;
+++}
+++
+++/**
+++ * hlist_add_head() - Add a hlist node to the beginning of the hlist
+++ * @node: pointer to the new node
+++ * @head: pointer to the head of the hlist
+++ */
+++static __inline__ void hlist_add_head(struct hlist_node *node,
+++				      struct hlist_head *head)
+++{
+++	struct hlist_node *first = head->first;
+++
+++	head->first = node;
+++	node->next = first;
+++	node->pprev = &head->first;
+++	if (first)
+++		first->pprev = &node->next;
+++}
+++
+++/**
+++ * hlist_add_before() - Add a hlist node before another node to the hlist
+++ * @new_node: pointer to the new node
+++ * @node: pointer to the reference node in the hlist
+++ */
+++static __inline__ void hlist_add_before(struct hlist_node *new_node,
+++					struct hlist_node *node)
+++{
+++	struct hlist_node **pprev = node->pprev;
+++
+++	*pprev = new_node;
+++	new_node->next = node;
+++	new_node->pprev = pprev;
+++	node->pprev = &new_node->next;
+++}
+++
+++/**
+++ * hlist_add_behind() - Add a hlist node behind another node to the hlist
+++ * @new_node: pointer to the new node
+++ * @node: pointer to the reference node in the hlist
+++ */
+++static __inline__ void hlist_add_behind(struct hlist_node *new_node,
+++					struct hlist_node *node)
+++{
+++	struct hlist_node *next = node->next;
+++
+++	node->next = new_node;
+++	new_node->pprev = &node->next;
+++	new_node->next = next;
+++	if (next)
+++		next->pprev = &new_node->next;
+++}
+++
+++/**
+++ * hlist_del() - Remove a hlist node from the hlist
+++ * @node: pointer to the node
+++ *
+++ * The node is only removed from the hlist. Neither the memory of the removed
+++ * node nor the memory of the entry containing the node is free'd. The node
+++ * has to be handled like an uninitialized node. Accessing the next or pprev
+++ * pointer of the node is not safe.
+++ *
+++ * Unlinked, initialized nodes are also uninitialized after hlist_del.
+++ *
+++ * LIST_POISONING can be enabled during build-time to provoke an invalid memory
+++ * access when the memory behind the next/prev pointer is used after an
+++ * hlist_del. This only works on systems which prohibit access to the predefined
+++ * memory addresses.
+++ */
+++static __inline__ void hlist_del(struct hlist_node *node)
+++{
+++	struct hlist_node *next = node->next;
+++	struct hlist_node **pprev = node->pprev;
+++
+++	if (pprev)
+++		*pprev = next;
+++
+++	if (next)
+++		next->pprev = pprev;
+++
+++#ifdef LIST_POISONING
+++	node->pprev = (struct hlist_node **)(0x00100100);
+++	node->next = (struct hlist_node *)(0x00200200);
+++#endif
+++}
+++
+++/**
+++ * hlist_del_init() - Remove a hlist node from the hlist and reinitialize it
+++ * @node: pointer to the node
+++ *
+++ * The removed node will not end up in an uninitialized state like when using
+++ * hlist_del. Instead the node is initialized again to the unlinked state.
+++ */
+++static __inline__ void hlist_del_init(struct hlist_node *node)
+++{
+++	hlist_del(node);
+++	INIT_HLIST_NODE(node);
+++}
+++
+++/**
+++ * hlist_empty() - Check if hlist head has no nodes attached
+++ * @head: pointer to the head of the hlist
+++ *
+++ * Return: 0 - hlist is not empty !0 - hlist is empty
+++ */
+++static __inline__ int hlist_empty(const struct hlist_head *head)
+++{
+++	return !head->first;
+++}
+++
+++/**
+++ * hlist_move_list() - Move hlist nodes from a hlist head new hlist head
+++ * @list: pointer to the head of the hlist with the node entries
+++ * @head: pointer to the head of the hlist
+++ *
+++ * All nodes from @list are added to to the beginning of the list of @head.
+++ * @head can be uninitialized or an empty, initialized hlist. All entries of
+++ * a non-empty hlist @head would be lost after this operation.
+++ *
+++ * The @list head will not end up in an uninitialized state. Instead the @list
+++ * is initialized again to an empty hlist.
+++ */
+++static __inline__ void hlist_move_list(struct hlist_head *list,
+++				       struct hlist_head *head)
+++{
+++	head->first = list->first;
+++	if (head->first)
+++		head->first->pprev = &head->first;
+++	INIT_HLIST_HEAD(list);
+++}
+++
+++/**
+++ * hlist_entry() - Calculate address of entry that contains hlist node
+++ * @node: pointer to hlist node
+++ * @type: type of the entry containing the hlist node
+++ * @member: name of the hlist_node member variable in struct @type
+++ *
+++ * Return: @type pointer of entry containing node
+++ */
+++#define hlist_entry(node, type, member) container_of(node, type, member)
+++
+++/**
+++ * hlist_entry_safe() - Calculate address of entry that contains hlist node
+++ * @node: pointer to hlist node or (struct hlist_node *)NULL
+++ * @type: type of the entry containing the hlist node
+++ * @member: name of the hlist_node member variable in struct @type
+++ *
+++ * Return: @type pointer of entry containing node or NULL
+++ */
+++#ifdef LIST_TYPEOF_USE
+++#define hlist_entry_safe(node, type, member) __extension__ ({ \
+++	 __typeof__(node) __node = (node); \
+++	 !__node ? NULL : hlist_entry(__node, type, member); })
+++#else
+++#define hlist_entry_safe(node, type, member) \
+++	(node) ? hlist_entry(node, type, member) : NULL
+++#endif
+++
+++/**
+++ * hlist_for_each - iterate over hlist nodes
+++ * @node: hlist_node pointer used as iterator
+++ * @head: pointer to the head of the hlist
+++ *
+++ * The nodes and the head of the hlist must must be kept unmodified while
+++ * iterating through it. Any modifications to the the hlist will cause undefined
+++ * behavior.
+++ */
+++#define hlist_for_each(node, head) \
+++	for (node = (head)->first; \
+++	     node; \
+++	     node = node->next)
+++
+++/**
+++ * hlist_for_each_entry_t - iterate over hlist entries
+++ * @entry: @type pointer used as iterator
+++ * @head: pointer to the head of the hlist
+++ * @type: type of the entries containing the hlist nodes
+++ * @member: name of the hlist_node member variable in struct @type
+++ *
+++ * The nodes and the head of the hlist must must be kept unmodified while
+++ * iterating through it. Any modifications to the the hlist will cause undefined
+++ * behavior.
+++ *
+++ * WARNING this functionality is not available in the Linux list implementation
+++ */
+++#define hlist_for_each_entry_t(entry, head, type, member) \
+++	for (entry = hlist_entry_safe((head)->first, type, member); \
+++	     entry; \
+++	     entry = hlist_entry_safe(entry->member.next, type, member))
+++
+++/**
+++ * hlist_for_each_entry - iterate over hlist entries
+++ * @entry: pointer used as iterator
+++ * @head: pointer to the head of the hlist
+++ * @member: name of the hlist_node member variable in struct type of @entry
+++ *
+++ * The nodes and the head of the hlist must must be kept unmodified while
+++ * iterating through it. Any modifications to the the hlist will cause undefined
+++ * behavior.
+++ */
+++#ifdef LIST_TYPEOF_USE
+++#define hlist_for_each_entry(entry, head, member) \
+++	hlist_for_each_entry_t(entry, head, __typeof__(*entry), member)
+++#endif
+++
+++/**
+++ * hlist_for_each_safe - iterate over hlist nodes and allow deletes
+++ * @node: hlist_node pointer used as iterator
+++ * @safe: hlist_node pointer used to store info for next entry in hlist
+++ * @head: pointer to the head of the hlist
+++ *
+++ * The current node (iterator) is allowed to be removed from the hlist. Any
+++ * other modifications to the the hlist will cause undefined behavior.
+++ */
+++#define hlist_for_each_safe(node, safe, head) \
+++	for (node = (head)->first; \
+++	     node && ((safe = node->next) || 1); \
+++	     node = safe)
+++
+++/**
+++ * hlist_for_each_entry_safe_t - iterate over hlist entries and allow deletes
+++ * @entry: @type pointer used as iterator
+++ * @safe: hlist_node pointer used to store info for next entry in hlist
+++ * @head: pointer to the head of the hlist
+++ * @type: type of the entries containing the hlist nodes
+++ * @member: name of the hlist_node member variable in struct @type
+++ *
+++ * The current node (iterator) is allowed to be removed from the hlist. Any
+++ * other modifications to the the hlist will cause undefined behavior.
+++ *
+++ * WARNING this functionality is not available in the Linux list implementation
+++ */
+++#define hlist_for_each_entry_safe_t(entry, safe, head, type, member) \
+++	for (entry = hlist_entry_safe((head)->first, type, member); \
+++	     entry && ((safe = entry->member.next) || 1); \
+++	     entry = hlist_entry_safe(safe, type, member))
+++
+++/**
+++ * hlist_for_each_entry_safe - iterate over hlist entries and allow deletes
+++ * @entry: pointer used as iterator
+++ * @safe: hlist_node pointer used to store info for next entry in hlist
+++ * @head: pointer to the head of the hlist
+++ * @member: name of the hlist_node member variable in struct type of @entry
+++ *
+++ * The current node (iterator) is allowed to be removed from the hlist. Any
+++ * other modifications to the the hlist will cause undefined behavior.
+++ */
+++#ifdef LIST_TYPEOF_USE
+++#define hlist_for_each_entry_safe(entry, safe, head, member) \
+++	hlist_for_each_entry_safe_t(entry, safe, head, __typeof__(*entry),\
+++				    member)
+++#endif
+++
+++#ifdef __cplusplus
+++}
+++#endif
+++
+++#endif /* __LINUX_LIKE_LIST_H__ */
++diff --git a/tcpdump.c b/tcpdump.c
++index be0c4f0..2125b66 100644
++--- a/tcpdump.c
+++++ b/tcpdump.c
++@@ -1118,7 +1118,7 @@ int tcpdump(int argc, char **argv)
++ 	struct ifreq req;
++ 	struct timeval tv;
++ 	struct dump_if *dump_if, *dump_if_tmp;
++-	struct list_head_first dump_if_list;
+++	struct list_head dump_if_list;
++ 	fd_set wait_sockets, tmp_wait_sockets;
++ 	ssize_t read_len;
++ 	int ret = EXIT_FAILURE, res, optchar, found_args = 1, max_sock = 0, tmp;
++@@ -1168,7 +1168,7 @@ int tcpdump(int argc, char **argv)
++ 	bat_hosts_init(read_opt);
++ 
++ 	/* init interfaces list */
++-	INIT_LIST_HEAD_FIRST(dump_if_list);
+++	INIT_LIST_HEAD(&dump_if_list);
++ 	FD_ZERO(&wait_sockets);
++ 
++ 	while (argc > found_args) {
++@@ -1176,7 +1176,6 @@ int tcpdump(int argc, char **argv)
++ 		dump_if = malloc(sizeof(struct dump_if));
++ 		memset(dump_if, 0, sizeof(struct dump_if));
++ 		dump_if->raw_sock = -1;
++-		INIT_LIST_HEAD(&dump_if->list);
++ 
++ 		dump_if->dev = argv[found_args];
++ 
++@@ -1306,7 +1305,7 @@ out:
++ 		if (dump_if->raw_sock >= 0)
++ 			close(dump_if->raw_sock);
++ 
++-		list_del((struct list_head *)&dump_if_list, &dump_if->list, &dump_if_list);
+++		list_del(&dump_if->list);
++ 		free(dump_if);
++ 	}
++ 
++diff --git a/tcpdump.h b/tcpdump.h
++index 229ee70..38d07c5 100644
++--- a/tcpdump.h
+++++ b/tcpdump.h
++@@ -27,7 +27,7 @@
++ #include <net/if_arp.h>
++ #include <sys/types.h>
++ #include "main.h"
++-#include "list-batman.h"
+++#include "list.h"
++ 
++ #ifndef ARPHRD_IEEE80211_PRISM
++ #define ARPHRD_IEEE80211_PRISM 802
+diff --git a/batctl/patches/0002-batctl-Use-monotonic-time-source-for-icmp-timing.patch b/batctl/patches/0002-batctl-Use-monotonic-time-source-for-icmp-timing.patch
+new file mode 100644
+index 0000000..1fbb6b9
+--- /dev/null
++++ b/batctl/patches/0002-batctl-Use-monotonic-time-source-for-icmp-timing.patch
+@@ -0,0 +1,83 @@
++From: Sven Eckelmann <sven@narfation.org>
++Date: Tue, 19 Jul 2016 22:44:09 +0200
++Subject: [PATCH] batctl: Use monotonic time source for icmp timing
++
++gettimeofday is not monotonic. It would give wrong results in some
++situation like leap seconds, when switching between daylight saving time
++and non-DST, NTP changes the time or when the administrator of the system
++changes it manually. The function is also obsolete since POSIX.1-2008.
++
++clock_gettime is recommended to get a monotonic timesource and as general
++replacement of gettimeofday.
++
++Signed-off-by: Sven Eckelmann <sven@narfation.org>
++---
++ Makefile    |  2 +-
++ functions.c | 17 +++++++++--------
++ 2 files changed, 10 insertions(+), 9 deletions(-)
++
++diff --git a/Makefile b/Makefile
++index 87851e6..5aad8fe 100755
++--- a/Makefile
+++++ b/Makefile
++@@ -45,7 +45,7 @@ MANPAGE = man/batctl.8
++ # batctl flags and options
++ CFLAGS += -Wall -W -std=gnu99 -fno-strict-aliasing -MD -MP
++ CPPFLAGS += -D_GNU_SOURCE
++-LDLIBS += -lm
+++LDLIBS += -lm -lrt
++ 
++ # disable verbose output
++ ifneq ($(findstring $(MAKEFLAGS),s),s)
++diff --git a/functions.c b/functions.c
++index d236d64..92de8e3 100644
++--- a/functions.c
+++++ b/functions.c
++@@ -46,6 +46,7 @@
++ #include <netlink/handlers.h>
++ #include <netlink/msg.h>
++ #include <netlink/attr.h>
+++#include <time.h>
++ 
++ #include "main.h"
++ #include "functions.h"
++@@ -55,7 +56,7 @@
++ #include "debugfs.h"
++ #include "netlink.h"
++ 
++-static struct timeval start_time;
+++static struct timespec start_time;
++ static char *host_name;
++ char *line_ptr = NULL;
++ 
++@@ -76,23 +77,23 @@ const char *fs_compile_out_param[] = {
++ 
++ void start_timer(void)
++ {
++-	gettimeofday(&start_time, NULL);
+++	clock_gettime(CLOCK_MONOTONIC, &start_time);
++ }
++ 
++ double end_timer(void)
++ {
++-	struct timeval end_time, diff;
+++	struct timespec end_time, diff;
++ 
++-	gettimeofday(&end_time, NULL);
+++	clock_gettime(CLOCK_MONOTONIC, &end_time);
++ 	diff.tv_sec = end_time.tv_sec - start_time.tv_sec;
++-	diff.tv_usec = end_time.tv_usec - start_time.tv_usec;
+++	diff.tv_nsec = end_time.tv_nsec - start_time.tv_nsec;
++ 
++-	if (diff.tv_usec < 0) {
+++	if (diff.tv_nsec < 0) {
++ 		diff.tv_sec--;
++-		diff.tv_usec += 1000000;
+++		diff.tv_nsec += 1000000000;
++ 	}
++ 
++-	return (((double)diff.tv_sec * 1000) + ((double)diff.tv_usec / 1000));
+++	return (((double)diff.tv_sec * 1000) + ((double)diff.tv_nsec / 1000000));
++ }
++ 
++ char *ether_ntoa_long(const struct ether_addr *addr)
+diff --git a/batctl/patches/0003-batctl-Remove-unused-batadv_icmp_user_cmd_type.patch b/batctl/patches/0003-batctl-Remove-unused-batadv_icmp_user_cmd_type.patch
+new file mode 100644
+index 0000000..9753ff8
+--- /dev/null
++++ b/batctl/patches/0003-batctl-Remove-unused-batadv_icmp_user_cmd_type.patch
+@@ -0,0 +1,30 @@
++From: Sven Eckelmann <sven@narfation.org>
++Date: Fri, 22 Jul 2016 01:30:11 +0200
++Subject: [PATCH] batctl: Remove unused batadv_icmp_user_cmd_type
++
++Signed-off-by: Sven Eckelmann <sven@narfation.org>
++---
++ packet.h | 10 ----------
++ 1 file changed, 10 deletions(-)
++
++diff --git a/packet.h b/packet.h
++index 6afc0b8..d2e9bbd 100644
++--- a/packet.h
+++++ b/packet.h
++@@ -252,16 +252,6 @@ struct batadv_elp_packet {
++ #define BATADV_ELP_HLEN sizeof(struct batadv_elp_packet)
++ 
++ /**
++- * enum batadv_icmp_user_cmd_type - types for batman-adv icmp cmd modes
++- * @BATADV_TP_START: start a throughput meter run
++- * @BATADV_TP_STOP: stop a throughput meter run
++- */
++-enum batadv_icmp_user_cmd_type {
++-	BATADV_TP_START		= 0,
++-	BATADV_TP_STOP		= 2,
++-};
++-
++-/**
++  * struct batadv_icmp_header - common members among all the ICMP packets
++  * @packet_type: batman-adv packet type, part of the general header
++  * @version: batman-adv protocol version, part of the genereal header
+diff --git a/batctl/patches/0004-batctl-Avoid-precedence-issues-in-macros.patch b/batctl/patches/0004-batctl-Avoid-precedence-issues-in-macros.patch
+new file mode 100644
+index 0000000..324265c
+--- /dev/null
++++ b/batctl/patches/0004-batctl-Avoid-precedence-issues-in-macros.patch
+@@ -0,0 +1,26 @@
++From: Sven Eckelmann <sven@narfation.org>
++Date: Wed, 21 Sep 2016 09:23:50 +0200
++Subject: [PATCH] batctl: Avoid precedence issues in macros
++
++It must be avoided that arguments to a macro are evaluated ungrouped (which
++enforces normal operator precendence). Otherwise the result of the macro
++is not well defined.
++
++Signed-off-by: Sven Eckelmann <sven@narfation.org>
++---
++ packet.h | 2 +-
++ 1 file changed, 1 insertion(+), 1 deletion(-)
++
++diff --git a/packet.h b/packet.h
++index d2e9bbd..7a36bcf 100644
++--- a/packet.h
+++++ b/packet.h
++@@ -21,7 +21,7 @@
++ #include <asm/byteorder.h>
++ #include <linux/types.h>
++ 
++-#define batadv_tp_is_error(n) ((u8)n > 127 ? 1 : 0)
+++#define batadv_tp_is_error(n) ((u8)(n) > 127 ? 1 : 0)
++ 
++ /**
++  * enum batadv_packettype - types for batman-adv encapsulated packets
+diff --git a/batctl/patches/0005-batctl-Use-rtnl-to-query-list-of-softif-devices.patch b/batctl/patches/0005-batctl-Use-rtnl-to-query-list-of-softif-devices.patch
+new file mode 100644
+index 0000000..9d7e3c4
+--- /dev/null
++++ b/batctl/patches/0005-batctl-Use-rtnl-to-query-list-of-softif-devices.patch
+@@ -0,0 +1,270 @@
++From: Sven Eckelmann <sven@narfation.org>
++Date: Tue, 18 Oct 2016 16:17:23 +0200
++Subject: [PATCH] batctl: Use rtnl to query list of softif devices
++
++The normal way of network related programs to query the state of interfaces
++is to use the rtnetlink. Most of these data can also be queried via sysfs
++but it is easier to use the same way for both retrieving the list of
++interfaces and modifying the list of interfaces.
++
++Signed-off-by: Sven Eckelmann <sven@narfation.org>
++Signed-off-by: Simon Wunderlich <sw@simonwunderlich.de>
++---
++ functions.c |  64 +++++++++++++++++++++++++++++++
++ functions.h |   5 ++-
++ sys.c       | 123 +++++++++++++++++++++++++++++++++---------------------------
++ 3 files changed, 135 insertions(+), 57 deletions(-)
++
++diff --git a/functions.c b/functions.c
++index 92de8e3..8470b49 100644
++--- a/functions.c
+++++ b/functions.c
++@@ -37,6 +37,7 @@
++ #include <stdint.h>
++ #include <linux/netlink.h>
++ #include <net/ethernet.h>
+++#include <linux/if_link.h>
++ #include <linux/rtnetlink.h>
++ #include <linux/neighbour.h>
++ #include <errno.h>
++@@ -890,3 +891,66 @@ int print_routing_algos(void)
++ 		err = debug_print_routing_algos();
++ 	return err;
++ }
+++
+++int query_rtnl_link(int ifindex, nl_recvmsg_msg_cb_t func, void *arg)
+++{
+++	struct ifinfomsg rt_hdr = {
+++		.ifi_family = IFLA_UNSPEC,
+++	};
+++	struct nl_sock *sock;
+++	struct nl_msg *msg;
+++	struct nl_cb *cb;
+++	int err = 0;
+++	int ret;
+++
+++	sock = nl_socket_alloc();
+++	if (!sock)
+++		return -ENOMEM;
+++
+++	ret = nl_connect(sock, NETLINK_ROUTE);
+++	if (ret < 0) {
+++		err = -ENOMEM;
+++		goto err_free_sock;
+++	}
+++
+++	cb = nl_cb_alloc(NL_CB_DEFAULT);
+++	if (!cb) {
+++		err = -ENOMEM;
+++		goto err_free_sock;
+++	}
+++
+++	nl_cb_set(cb, NL_CB_VALID, NL_CB_CUSTOM, func, arg);
+++
+++	msg = nlmsg_alloc_simple(RTM_GETLINK, NLM_F_REQUEST | NLM_F_DUMP);
+++	if (!msg) {
+++		err = -ENOMEM;
+++		goto err_free_cb;
+++	}
+++
+++	ret = nlmsg_append(msg, &rt_hdr, sizeof(rt_hdr), NLMSG_ALIGNTO);
+++	if (ret < 0) {
+++		err = -ENOMEM;
+++		goto err_free_msg;
+++	}
+++
+++	ret = nla_put_u32(msg, IFLA_MASTER, ifindex);
+++	if (ret < 0) {
+++		err = -ENOMEM;
+++		goto err_free_msg;
+++	}
+++
+++	ret = nl_send_auto_complete(sock, msg);
+++	if (ret < 0)
+++		goto err_free_msg;
+++
+++	nl_recvmsgs(sock, cb);
+++
+++err_free_msg:
+++	nlmsg_free(msg);
+++err_free_cb:
+++	nl_cb_put(cb);
+++err_free_sock:
+++	nl_socket_free(sock);
+++
+++	return err;
+++}
++diff --git a/functions.h b/functions.h
++index e24dea0..a6090b6 100644
++--- a/functions.h
+++++ b/functions.h
++@@ -23,6 +23,8 @@
++ #define _BATCTL_FUNCTIONS_H
++ 
++ #include <net/ethernet.h>
+++#include <netlink/netlink.h>
+++#include <netlink/handlers.h>
++ #include <stddef.h>
++ 
++ 
++@@ -43,7 +45,8 @@ int write_file(const char *dir, const char *fname, const char *arg1,
++ struct ether_addr *translate_mac(const char *mesh_iface,
++ 				 const struct ether_addr *mac);
++ struct ether_addr *resolve_mac(const char *asc);
++-int vlan_get_link(const char *ifname, char **parent);
+++int vlan_get_link(const char *ifname, char **parent);\
+++int query_rtnl_link(int ifindex, nl_recvmsg_msg_cb_t func, void *arg);
++ 
++ int print_routing_algos(void);
++ extern char *line_ptr;
++diff --git a/sys.c b/sys.c
++index ca837f6..0140b28 100644
++--- a/sys.c
+++++ b/sys.c
++@@ -26,6 +26,11 @@
++ #include <string.h>
++ #include <errno.h>
++ #include <dirent.h>
+++#include <net/if.h>
+++#include <linux/if_link.h>
+++#include <netlink/netlink.h>
+++#include <netlink/msg.h>
+++#include <netlink/attr.h>
++ 
++ #include "main.h"
++ #include "sys.h"
++@@ -119,72 +124,78 @@ static void interface_usage(void)
++ 	fprintf(stderr, " \t -h print this help\n");
++ }
++ 
+++static struct nla_policy link_policy[IFLA_MAX + 1] = {
+++	[IFLA_IFNAME]           = { .type = NLA_STRING, .maxlen = IFNAMSIZ },
+++	[IFLA_MASTER]         = { .type = NLA_U32 },
+++};
+++
+++struct print_interfaces_rtnl_arg {
+++	int ifindex;
+++};
+++
+++static int print_interfaces_rtnl_parse(struct nl_msg *msg, void *arg)
+++{
+++	struct print_interfaces_rtnl_arg *print_arg = arg;
+++	struct nlattr *attrs[IFLA_MAX + 1];
+++	char path_buff[PATH_BUFF_LEN];
+++	struct ifinfomsg *ifm;
+++	char *ifname;
+++	int ret;
+++	const char *status;
+++	int master;
+++
+++	ifm = nlmsg_data(nlmsg_hdr(msg));
+++	ret = nlmsg_parse(nlmsg_hdr(msg), sizeof(*ifm), attrs, IFLA_MAX,
+++			  link_policy);
+++	if (ret < 0)
+++		goto err;
+++
+++	if (!attrs[IFLA_IFNAME])
+++		goto err;
+++
+++	if (!attrs[IFLA_MASTER])
+++		goto err;
+++
+++	ifname = nla_get_string(attrs[IFLA_IFNAME]);
+++	master = nla_get_u32(attrs[IFLA_MASTER]);
+++
+++	/* required on older kernels which don't prefilter the results */
+++	if (master != print_arg->ifindex)
+++		goto err;
+++
+++	snprintf(path_buff, sizeof(path_buff), SYS_IFACE_STATUS_FMT, ifname);
+++	ret = read_file("", path_buff, USE_READ_BUFF | SILENCE_ERRORS, 0, 0, 0);
+++	if (ret != EXIT_SUCCESS)
+++		status = "<error reading status>\n";
+++	else
+++		status = line_ptr;
+++
+++	printf("%s: %s", ifname, status);
+++
+++	free(line_ptr);
+++	line_ptr = NULL;
+++
+++err:
+++	return NL_OK;
+++}
+++
++ static int print_interfaces(char *mesh_iface)
++ {
++-	DIR *iface_base_dir;
++-	struct dirent *iface_dir;
++-	char *path_buff;
++-	int res;
+++	struct print_interfaces_rtnl_arg print_arg;
++ 
++ 	if (!file_exists(module_ver_path)) {
++ 		fprintf(stderr, "Error - batman-adv module has not been loaded\n");
++-		goto err;
+++		return EXIT_FAILURE;
++ 	}
++ 
++-	path_buff = malloc(PATH_BUFF_LEN);
++-	if (!path_buff) {
++-		fprintf(stderr, "Error - could not allocate path buffer: out of memory ?\n");
++-		goto err;
++-	}
+++	print_arg.ifindex = if_nametoindex(mesh_iface);
+++	if (!print_arg.ifindex)
+++		return EXIT_FAILURE;
++ 
++-	iface_base_dir = opendir(SYS_IFACE_PATH);
++-	if (!iface_base_dir) {
++-		fprintf(stderr, "Error - the directory '%s' could not be read: %s\n",
++-		       SYS_IFACE_PATH, strerror(errno));
++-		fprintf(stderr, "Is the batman-adv module loaded and sysfs mounted ?\n");
++-		goto err_buff;
++-	}
+++	query_rtnl_link(print_arg.ifindex, print_interfaces_rtnl_parse,
+++			&print_arg);
++ 
++-	while ((iface_dir = readdir(iface_base_dir)) != NULL) {
++-		snprintf(path_buff, PATH_BUFF_LEN, SYS_MESH_IFACE_FMT, iface_dir->d_name);
++-		res = read_file("", path_buff, USE_READ_BUFF | SILENCE_ERRORS, 0, 0, 0);
++-		if (res != EXIT_SUCCESS)
++-			continue;
++-
++-		if (line_ptr[strlen(line_ptr) - 1] == '\n')
++-			line_ptr[strlen(line_ptr) - 1] = '\0';
++-
++-		if (strcmp(line_ptr, "none") == 0)
++-			goto free_line;
++-
++-		if (strcmp(line_ptr, mesh_iface) != 0)
++-			goto free_line;
++-
++-		free(line_ptr);
++-		line_ptr = NULL;
++-
++-		snprintf(path_buff, PATH_BUFF_LEN, SYS_IFACE_STATUS_FMT, iface_dir->d_name);
++-		res = read_file("", path_buff, USE_READ_BUFF | SILENCE_ERRORS, 0, 0, 0);
++-		if (res != EXIT_SUCCESS) {
++-			fprintf(stderr, "<error reading status>\n");
++-			continue;
++-		}
++-
++-		printf("%s: %s", iface_dir->d_name, line_ptr);
++-
++-free_line:
++-		free(line_ptr);
++-		line_ptr = NULL;
++-	}
++-
++-	free(path_buff);
++-	closedir(iface_base_dir);
++ 	return EXIT_SUCCESS;
++-
++-err_buff:
++-	free(path_buff);
++-err:
++-	return EXIT_FAILURE;
++ }
++ 
++ int interface(char *mesh_iface, int argc, char **argv)
+diff --git a/batctl/patches/0006-batctl-Add-command-to-create-destroy-batman-adv-inte.patch b/batctl/patches/0006-batctl-Add-command-to-create-destroy-batman-adv-inte.patch
+new file mode 100644
+index 0000000..a0d8158
+--- /dev/null
++++ b/batctl/patches/0006-batctl-Add-command-to-create-destroy-batman-adv-inte.patch
+@@ -0,0 +1,290 @@
++From: Sven Eckelmann <sven@narfation.org>
++Date: Tue, 18 Oct 2016 16:17:24 +0200
++Subject: [PATCH] batctl: Add command to create/destroy batman-adv interface
++
++The command "create" can be used to create a batman-adv interface without
++any interface attached. This is helpful when the interfaces should be
++configured independently of the first attached interface.
++
++The command "destroy" can be used to destroy a batman-adv interface without
++going through all attached interfaces and delete them manually.
++
++Signed-off-by: Sven Eckelmann <sven@narfation.org>
++Signed-off-by: Simon Wunderlich <sw@simonwunderlich.de>
++---
++ functions.c  |  59 ++++++++++++++++++++++++
++ functions.h  |   1 +
++ man/batctl.8 |   3 ++
++ sys.c        | 143 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++---
++ 4 files changed, 201 insertions(+), 5 deletions(-)
++
++diff --git a/functions.c b/functions.c
++index 8470b49..85482b4 100644
++--- a/functions.c
+++++ b/functions.c
++@@ -954,3 +954,62 @@ err_free_sock:
++ 
++ 	return err;
++ }
+++
+++static int ack_errno_handler(struct sockaddr_nl *nla __maybe_unused,
+++			     struct nlmsgerr *nlerr,
+++			     void *arg)
+++{
+++	int *err = arg;
+++
+++	*err = nlerr->error;
+++
+++	return NL_STOP;
+++}
+++
+++static int ack_wait_handler(struct nl_msg *msg __maybe_unused,
+++			    void *arg __maybe_unused)
+++{
+++	return NL_STOP;
+++}
+++
+++int netlink_simple_request(struct nl_msg *msg)
+++{
+++	struct nl_sock *sock;
+++	struct nl_cb *cb;
+++	int err = 0;
+++	int ret;
+++
+++	sock = nl_socket_alloc();
+++	if (!sock)
+++		return -ENOMEM;
+++
+++	ret = nl_connect(sock, NETLINK_ROUTE);
+++	if (ret < 0) {
+++		err = -ENOMEM;
+++		goto err_free_sock;
+++	}
+++
+++	cb = nl_cb_alloc(NL_CB_DEFAULT);
+++	if (!cb) {
+++		err = -ENOMEM;
+++		goto err_free_sock;
+++	}
+++
+++	nl_cb_err(cb, NL_CB_CUSTOM, ack_errno_handler, &err);
+++	nl_cb_set(cb, NL_CB_ACK, NL_CB_CUSTOM, ack_wait_handler, NULL);
+++
+++	ret = nl_send_auto_complete(sock, msg);
+++	if (ret < 0)
+++		goto err_free_cb;
+++
+++	// ack_errno_handler sets err on errors
+++	err = 0;
+++	nl_recvmsgs(sock, cb);
+++
+++err_free_cb:
+++	nl_cb_put(cb);
+++err_free_sock:
+++	nl_socket_free(sock);
+++
+++	return err;
+++}
++diff --git a/functions.h b/functions.h
++index a6090b6..7757731 100644
++--- a/functions.h
+++++ b/functions.h
++@@ -47,6 +47,7 @@ struct ether_addr *translate_mac(const char *mesh_iface,
++ struct ether_addr *resolve_mac(const char *asc);
++ int vlan_get_link(const char *ifname, char **parent);\
++ int query_rtnl_link(int ifindex, nl_recvmsg_msg_cb_t func, void *arg);
+++int netlink_simple_request(struct nl_msg *msg);
++ 
++ int print_routing_algos(void);
++ extern char *line_ptr;
++diff --git a/man/batctl.8 b/man/batctl.8
++index d5a5ce0..37b5632 100644
++--- a/man/batctl.8
+++++ b/man/batctl.8
++@@ -56,6 +56,9 @@ performances, is also included.
++ If no parameter is given or the first parameter is neither "add" nor "del" the current interface settings are displayed.
++ In order to add or delete interfaces specify "add" or "del" as first argument and append the interface names you wish to
++ add or delete. Multiple interfaces can be specified.
+++.IP "\fBinterface\fP|\fBif\fP [\fBcreate\fP|\fBdestroy\fP]"
+++A batman-adv interface without attached interfaces can be created using "create". The parameter "destroy" can be used to
+++free all attached interfaces and remove batman-adv interface.
++ .br
++ .IP "\fBorig_interval\fP|\fBit\fP [\fBinterval\fP]"
++ If no parameter is given the current originator interval setting is displayed otherwise the parameter is used to set the
++diff --git a/sys.c b/sys.c
++index 0140b28..c18c6b8 100644
++--- a/sys.c
+++++ b/sys.c
++@@ -120,6 +120,7 @@ const struct settings_data batctl_settings[BATCTL_SETTINGS_NUM] = {
++ static void interface_usage(void)
++ {
++ 	fprintf(stderr, "Usage: batctl [options] interface [parameters] [add|del iface(s)]\n");
+++	fprintf(stderr, "       batctl [options] interface [parameters] [create|destroy]\n");
++ 	fprintf(stderr, "parameters:\n");
++ 	fprintf(stderr, " \t -h print this help\n");
++ }
++@@ -198,10 +199,95 @@ static int print_interfaces(char *mesh_iface)
++ 	return EXIT_SUCCESS;
++ }
++ 
+++static int create_interface(const char *mesh_iface)
+++{
+++	struct ifinfomsg rt_hdr = {
+++		.ifi_family = IFLA_UNSPEC,
+++	};
+++	struct nlattr *linkinfo;
+++	struct nl_msg *msg;
+++	int err = 0;
+++	int ret;
+++
+++	msg = nlmsg_alloc_simple(RTM_NEWLINK,
+++				 NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL | NLM_F_ACK);
+++	if (!msg) {
+++		return -ENOMEM;
+++	}
+++
+++	ret = nlmsg_append(msg, &rt_hdr, sizeof(rt_hdr), NLMSG_ALIGNTO);
+++	if (ret < 0) {
+++		err = -ENOMEM;
+++		goto err_free_msg;
+++	}
+++
+++	ret = nla_put_string(msg, IFLA_IFNAME, mesh_iface);
+++	if (ret < 0) {
+++		err = -ENOMEM;
+++		goto err_free_msg;
+++	}
+++
+++	linkinfo = nla_nest_start(msg, IFLA_LINKINFO);
+++	if (!linkinfo) {
+++		err = -ENOMEM;
+++		goto err_free_msg;
+++	}
+++
+++	ret = nla_put_string(msg, IFLA_INFO_KIND, "batadv");
+++	if (ret < 0) {
+++		err = -ENOMEM;
+++		goto err_free_msg;
+++	}
+++
+++	nla_nest_end(msg, linkinfo);
+++
+++	err = netlink_simple_request(msg);
+++
+++err_free_msg:
+++	nlmsg_free(msg);
+++
+++	return err;
+++}
+++
+++static int destroy_interface(const char *mesh_iface)
+++{
+++	struct ifinfomsg rt_hdr = {
+++		.ifi_family = IFLA_UNSPEC,
+++	};
+++	struct nl_msg *msg;
+++	int err = 0;
+++	int ret;
+++
+++	msg = nlmsg_alloc_simple(RTM_DELLINK, NLM_F_REQUEST | NLM_F_ACK);
+++	if (!msg) {
+++		return -ENOMEM;
+++	}
+++
+++	ret = nlmsg_append(msg, &rt_hdr, sizeof(rt_hdr), NLMSG_ALIGNTO);
+++	if (ret < 0) {
+++		err = -ENOMEM;
+++		goto err_free_msg;
+++	}
+++
+++	ret = nla_put_string(msg, IFLA_IFNAME, mesh_iface);
+++	if (ret < 0) {
+++		err = -ENOMEM;
+++		goto err_free_msg;
+++	}
+++
+++	err = netlink_simple_request(msg);
+++
+++err_free_msg:
+++	nlmsg_free(msg);
+++
+++	return err;
+++}
+++
++ int interface(char *mesh_iface, int argc, char **argv)
++ {
++ 	char *path_buff;
++ 	int i, res, optchar;
+++	int ret;
++ 
++ 	while ((optchar = getopt(argc, argv, "h")) != -1) {
++ 		switch (optchar) {
++@@ -218,16 +304,63 @@ int interface(char *mesh_iface, int argc, char **argv)
++ 		return print_interfaces(mesh_iface);
++ 
++ 	if ((strcmp(argv[1], "add") != 0) && (strcmp(argv[1], "a") != 0) &&
++-	    (strcmp(argv[1], "del") != 0) && (strcmp(argv[1], "d") != 0)) {
+++	    (strcmp(argv[1], "del") != 0) && (strcmp(argv[1], "d") != 0) &&
+++	    (strcmp(argv[1], "create") != 0) && (strcmp(argv[1], "c") != 0) &&
+++	    (strcmp(argv[1], "destroy") != 0) && (strcmp(argv[1], "D") != 0)) {
++ 		fprintf(stderr, "Error - unknown argument specified: %s\n", argv[1]);
++ 		interface_usage();
++ 		goto err;
++ 	}
++ 
++-	if (argc == 2) {
++-		fprintf(stderr, "Error - missing interface name(s) after '%s'\n", argv[1]);
++-		interface_usage();
++-		goto err;
+++	if (strcmp(argv[1], "destroy") == 0)
+++		argv[1][0] = 'D';
+++
+++	switch (argv[1][0]) {
+++	case 'a':
+++	case 'd':
+++		if (argc == 2) {
+++			fprintf(stderr,
+++				"Error - missing interface name(s) after '%s'\n",
+++				argv[1]);
+++			interface_usage();
+++			goto err;
+++		}
+++		break;
+++	case 'c':
+++	case 'D':
+++		if (argc != 2) {
+++			fprintf(stderr,
+++				"Error - extra parameter after '%s'\n",
+++				argv[1]);
+++			interface_usage();
+++			goto err;
+++		}
+++		break;
+++	default:
+++		break;
+++	}
+++
+++	switch (argv[1][0]) {
+++	case 'c':
+++		ret = create_interface(mesh_iface);
+++		if (ret < 0) {
+++			fprintf(stderr,
+++				"Error - failed to create batman-adv interface: %s\n",
+++				strerror(-ret));
+++			goto err;
+++		}
+++		return EXIT_SUCCESS;
+++	case 'D':
+++		ret = destroy_interface(mesh_iface);
+++		if (ret < 0) {
+++			fprintf(stderr,
+++				"Error - failed to destroy batman-adv interface: %s\n",
+++				strerror(-ret));
+++			goto err;
+++		}
+++		return EXIT_SUCCESS;
+++	default:
+++		break;
++ 	}
++ 
++ 	path_buff = malloc(PATH_BUFF_LEN);
+diff --git a/batctl/patches/0007-batctl-Use-rtnl-to-add-remove-interfaces.patch b/batctl/patches/0007-batctl-Use-rtnl-to-add-remove-interfaces.patch
+new file mode 100644
+index 0000000..a5db17f
+--- /dev/null
++++ b/batctl/patches/0007-batctl-Use-rtnl-to-add-remove-interfaces.patch
+@@ -0,0 +1,236 @@
++From: Sven Eckelmann <sven@narfation.org>
++Date: Tue, 18 Oct 2016 16:17:25 +0200
++Subject: [PATCH] batctl: Use rtnl to add/remove interfaces
++
++The sysfs interface to add/remove interfaces to/from a batman-adv
++soft-interface was downgraded in batman-adv master to a second-class
++citizen. This was done because it has conceptional problems (for example
++locking of sysfs vs. locking of the network core code). The only direct way
++to modify network interfaces is rtnetlink. sysfs still exists but has to
++use workers which delay the actual add/del to a later point.
++
++It is therefore prefered to use the modern rtnetlink. Only batman-adv
++versions older than v2013.2.0 (Linux 3.10) will not yet support the
++rtnl_link operations required for it to work.
++
++Signed-off-by: Sven Eckelmann <sven@narfation.org>
++Signed-off-by: Simon Wunderlich <sw@simonwunderlich.de>
++---
++ sys.c | 172 +++++++++++++++++++++++++++++++++++++++++++++++++++++++-----------
++ 1 file changed, 145 insertions(+), 27 deletions(-)
++
++diff --git a/sys.c b/sys.c
++index c18c6b8..cefd53c 100644
++--- a/sys.c
+++++ b/sys.c
++@@ -199,6 +199,58 @@ static int print_interfaces(char *mesh_iface)
++ 	return EXIT_SUCCESS;
++ }
++ 
+++struct count_interfaces_rtnl_arg {
+++	int ifindex;
+++	unsigned int count;
+++};
+++
+++static int count_interfaces_rtnl_parse(struct nl_msg *msg, void *arg)
+++{
+++	struct count_interfaces_rtnl_arg *count_arg = arg;
+++	struct nlattr *attrs[IFLA_MAX + 1];
+++	struct ifinfomsg *ifm;
+++	int ret;
+++	int master;
+++
+++	ifm = nlmsg_data(nlmsg_hdr(msg));
+++	ret = nlmsg_parse(nlmsg_hdr(msg), sizeof(*ifm), attrs, IFLA_MAX,
+++			  link_policy);
+++	if (ret < 0)
+++		goto err;
+++
+++	if (!attrs[IFLA_IFNAME])
+++		goto err;
+++
+++	if (!attrs[IFLA_MASTER])
+++		goto err;
+++
+++	master = nla_get_u32(attrs[IFLA_MASTER]);
+++
+++	/* required on older kernels which don't prefilter the results */
+++	if (master != count_arg->ifindex)
+++		goto err;
+++
+++	count_arg->count++;
+++
+++err:
+++	return NL_OK;
+++}
+++
+++static unsigned int count_interfaces(char *mesh_iface)
+++{
+++	struct count_interfaces_rtnl_arg count_arg;
+++
+++	count_arg.count = 0;
+++	count_arg.ifindex = if_nametoindex(mesh_iface);
+++	if (!count_arg.ifindex)
+++		return 0;
+++
+++	query_rtnl_link(count_arg.ifindex, count_interfaces_rtnl_parse,
+++			&count_arg);
+++
+++	return count_arg.count;
+++}
+++
++ static int create_interface(const char *mesh_iface)
++ {
++ 	struct ifinfomsg rt_hdr = {
++@@ -283,11 +335,54 @@ err_free_msg:
++ 	return err;
++ }
++ 
+++static int set_master_interface(const char *iface, unsigned int ifmaster)
+++{
+++	struct ifinfomsg rt_hdr = {
+++		.ifi_family = IFLA_UNSPEC,
+++	};
+++	struct nl_msg *msg;
+++	int err = 0;
+++	int ret;
+++
+++	msg = nlmsg_alloc_simple(RTM_SETLINK, NLM_F_REQUEST | NLM_F_ACK);
+++	if (!msg) {
+++		return -ENOMEM;
+++	}
+++
+++	ret = nlmsg_append(msg, &rt_hdr, sizeof(rt_hdr), NLMSG_ALIGNTO);
+++	if (ret < 0) {
+++		err = -ENOMEM;
+++		goto err_free_msg;
+++	}
+++
+++	ret = nla_put_string(msg, IFLA_IFNAME, iface);
+++	if (ret < 0) {
+++		err = -ENOMEM;
+++		goto err_free_msg;
+++	}
+++
+++	ret = nla_put_u32(msg, IFLA_MASTER, ifmaster);
+++	if (ret < 0) {
+++		err = -ENOMEM;
+++		goto err_free_msg;
+++	}
+++
+++	err = netlink_simple_request(msg);
+++
+++err_free_msg:
+++	nlmsg_free(msg);
+++
+++	return err;
+++}
+++
++ int interface(char *mesh_iface, int argc, char **argv)
++ {
++-	char *path_buff;
++-	int i, res, optchar;
+++	int i, optchar;
++ 	int ret;
+++	unsigned int ifindex;
+++	unsigned int ifmaster;
+++	const char *long_op;
+++	unsigned int cnt;
++ 
++ 	while ((optchar = getopt(argc, argv, "h")) != -1) {
++ 		switch (optchar) {
++@@ -363,46 +458,69 @@ int interface(char *mesh_iface, int argc, char **argv)
++ 		break;
++ 	}
++ 
++-	path_buff = malloc(PATH_BUFF_LEN);
++-	if (!path_buff) {
++-		fprintf(stderr, "Error - could not allocate path buffer: out of memory ?\n");
+++	/* get index of batman-adv interface - or try to create it */
+++	ifmaster = if_nametoindex(mesh_iface);
+++	if (!ifmaster && argv[1][0] == 'a') {
+++		ret = create_interface(mesh_iface);
+++		if (ret < 0) {
+++			fprintf(stderr,
+++				"Error - failed to create batman-adv interface: %s\n",
+++				strerror(-ret));
+++			goto err;
+++		}
+++
+++		ifmaster = if_nametoindex(mesh_iface);
+++	}
+++
+++	if (!ifmaster) {
+++		ret = -ENODEV;
+++		fprintf(stderr,
+++			"Error - failed to find batman-adv interface: %s\n",
+++			strerror(-ret));
+++		goto err;
+++	}
+++
+++	/* make sure that batman-adv is loaded or was loaded by create_interface */
+++	if (!file_exists(module_ver_path)) {
+++		fprintf(stderr, "Error - batman-adv module has not been loaded\n");
++ 		goto err;
++ 	}
++ 
++ 	for (i = 2; i < argc; i++) {
++-		snprintf(path_buff, PATH_BUFF_LEN, SYS_MESH_IFACE_FMT, argv[i]);
+++		ifindex = if_nametoindex(argv[i]);
++ 
++-		if (!file_exists(path_buff)) {
++-			snprintf(path_buff, PATH_BUFF_LEN, SYS_IFACE_DIR, argv[i]);
++-
++-			if (!file_exists(path_buff)) {
++-				fprintf(stderr, "Error - interface does not exist: %s\n", argv[i]);
++-				continue;
++-			}
++-
++-			if (!file_exists(module_ver_path)) {
++-				fprintf(stderr, "Error - batman-adv module has not been loaded\n");
++-				goto err_buff;
++-			}
++-
++-			fprintf(stderr, "Error - interface type not supported by batman-adv: %s\n", argv[i]);
+++		if (!ifindex) {
+++			fprintf(stderr, "Error - interface does not exist: %s\n", argv[i]);
++ 			continue;
++ 		}
++ 
++ 		if (argv[1][0] == 'a')
++-			res = write_file("", path_buff, mesh_iface, NULL);
+++			ifindex = ifmaster;
++ 		else
++-			res = write_file("", path_buff, "none", NULL);
+++			ifindex = 0;
++ 
++-		if (res != EXIT_SUCCESS)
++-			goto err_buff;
+++		ret = set_master_interface(argv[i], ifindex);
+++		if (ret < 0) {
+++			if (argv[1][0] == 'a')
+++				long_op = "add";
+++			else
+++				long_op = "delete";
+++
+++			fprintf(stderr, "Error - failed to %s interface %s: %s\n",
+++				long_op, argv[i], strerror(-ret));
+++			goto err;
+++		}
+++	}
+++
+++	/* check if there is no interface left and then destroy mesh_iface */
+++	if (argv[1][0] == 'd') {
+++		cnt = count_interfaces(mesh_iface);
+++		if (cnt == 0)
+++			destroy_interface(mesh_iface);
++ 	}
++ 
++-	free(path_buff);
++ 	return EXIT_SUCCESS;
++ 
++-err_buff:
++-	free(path_buff);
++ err:
++ 	return EXIT_FAILURE;
++ }
+diff --git a/batctl/patches/0008-batctl-Parse-interface-arguments-relative-to-last-pa.patch b/batctl/patches/0008-batctl-Parse-interface-arguments-relative-to-last-pa.patch
+new file mode 100644
+index 0000000..687c7c2
+--- /dev/null
++++ b/batctl/patches/0008-batctl-Parse-interface-arguments-relative-to-last-pa.patch
+@@ -0,0 +1,144 @@
++From: Sven Eckelmann <sven@narfation.org>
++Date: Tue, 18 Oct 2016 16:17:26 +0200
++Subject: [PATCH] batctl: Parse interface arguments relative to last parsed option
++
++Arguments may be added between "interface" and the subcommands "add" and
++"del". Thus is should not be hardcoded which positions of argv the
++subcommands start and instead the information from getopt should be used to
++calculate the correct position.
++
++Signed-off-by: Sven Eckelmann <sven@narfation.org>
++Signed-off-by: Simon Wunderlich <sw@simonwunderlich.de>
++---
++ sys.c | 51 ++++++++++++++++++++++++++++-----------------------
++ 1 file changed, 28 insertions(+), 23 deletions(-)
++
++diff --git a/sys.c b/sys.c
++index cefd53c..190fd06 100644
++--- a/sys.c
+++++ b/sys.c
++@@ -383,6 +383,8 @@ int interface(char *mesh_iface, int argc, char **argv)
++ 	unsigned int ifmaster;
++ 	const char *long_op;
++ 	unsigned int cnt;
+++	int rest_argc;
+++	char **rest_argv;
++ 
++ 	while ((optchar = getopt(argc, argv, "h")) != -1) {
++ 		switch (optchar) {
++@@ -395,38 +397,41 @@ int interface(char *mesh_iface, int argc, char **argv)
++ 		}
++ 	}
++ 
++-	if (argc == 1)
+++	rest_argc = argc - optind;
+++	rest_argv = &argv[optind];
+++
+++	if (rest_argc == 0)
++ 		return print_interfaces(mesh_iface);
++ 
++-	if ((strcmp(argv[1], "add") != 0) && (strcmp(argv[1], "a") != 0) &&
++-	    (strcmp(argv[1], "del") != 0) && (strcmp(argv[1], "d") != 0) &&
++-	    (strcmp(argv[1], "create") != 0) && (strcmp(argv[1], "c") != 0) &&
++-	    (strcmp(argv[1], "destroy") != 0) && (strcmp(argv[1], "D") != 0)) {
++-		fprintf(stderr, "Error - unknown argument specified: %s\n", argv[1]);
+++	if ((strcmp(rest_argv[0], "add") != 0) && (strcmp(rest_argv[0], "a") != 0) &&
+++	    (strcmp(rest_argv[0], "del") != 0) && (strcmp(rest_argv[0], "d") != 0) &&
+++	    (strcmp(rest_argv[0], "create") != 0) && (strcmp(rest_argv[0], "c") != 0) &&
+++	    (strcmp(rest_argv[0], "destroy") != 0) && (strcmp(rest_argv[0], "D") != 0)) {
+++		fprintf(stderr, "Error - unknown argument specified: %s\n", rest_argv[0]);
++ 		interface_usage();
++ 		goto err;
++ 	}
++ 
++-	if (strcmp(argv[1], "destroy") == 0)
++-		argv[1][0] = 'D';
+++	if (strcmp(rest_argv[0], "destroy") == 0)
+++		rest_argv[0][0] = 'D';
++ 
++-	switch (argv[1][0]) {
+++	switch (rest_argv[0][0]) {
++ 	case 'a':
++ 	case 'd':
++-		if (argc == 2) {
+++		if (rest_argc == 1) {
++ 			fprintf(stderr,
++ 				"Error - missing interface name(s) after '%s'\n",
++-				argv[1]);
+++				rest_argv[0]);
++ 			interface_usage();
++ 			goto err;
++ 		}
++ 		break;
++ 	case 'c':
++ 	case 'D':
++-		if (argc != 2) {
+++		if (rest_argc != 1) {
++ 			fprintf(stderr,
++ 				"Error - extra parameter after '%s'\n",
++-				argv[1]);
+++				rest_argv[0]);
++ 			interface_usage();
++ 			goto err;
++ 		}
++@@ -435,7 +440,7 @@ int interface(char *mesh_iface, int argc, char **argv)
++ 		break;
++ 	}
++ 
++-	switch (argv[1][0]) {
+++	switch (rest_argv[0][0]) {
++ 	case 'c':
++ 		ret = create_interface(mesh_iface);
++ 		if (ret < 0) {
++@@ -460,7 +465,7 @@ int interface(char *mesh_iface, int argc, char **argv)
++ 
++ 	/* get index of batman-adv interface - or try to create it */
++ 	ifmaster = if_nametoindex(mesh_iface);
++-	if (!ifmaster && argv[1][0] == 'a') {
+++	if (!ifmaster && rest_argv[0][0] == 'a') {
++ 		ret = create_interface(mesh_iface);
++ 		if (ret < 0) {
++ 			fprintf(stderr,
++@@ -486,34 +491,34 @@ int interface(char *mesh_iface, int argc, char **argv)
++ 		goto err;
++ 	}
++ 
++-	for (i = 2; i < argc; i++) {
++-		ifindex = if_nametoindex(argv[i]);
+++	for (i = 1; i < rest_argc; i++) {
+++		ifindex = if_nametoindex(rest_argv[i]);
++ 
++ 		if (!ifindex) {
++-			fprintf(stderr, "Error - interface does not exist: %s\n", argv[i]);
+++			fprintf(stderr, "Error - interface does not exist: %s\n", rest_argv[i]);
++ 			continue;
++ 		}
++ 
++-		if (argv[1][0] == 'a')
+++		if (rest_argv[0][0] == 'a')
++ 			ifindex = ifmaster;
++ 		else
++ 			ifindex = 0;
++ 
++-		ret = set_master_interface(argv[i], ifindex);
+++		ret = set_master_interface(rest_argv[i], ifindex);
++ 		if (ret < 0) {
++-			if (argv[1][0] == 'a')
+++			if (rest_argv[0][0] == 'a')
++ 				long_op = "add";
++ 			else
++ 				long_op = "delete";
++ 
++ 			fprintf(stderr, "Error - failed to %s interface %s: %s\n",
++-				long_op, argv[i], strerror(-ret));
+++				long_op, rest_argv[i], strerror(-ret));
++ 			goto err;
++ 		}
++ 	}
++ 
++ 	/* check if there is no interface left and then destroy mesh_iface */
++-	if (argv[1][0] == 'd') {
+++	if (rest_argv[0][0] == 'd') {
++ 		cnt = count_interfaces(mesh_iface);
++ 		if (cnt == 0)
++ 			destroy_interface(mesh_iface);
+diff --git a/batctl/patches/0009-batctl-Allow-to-disable-automatic-interface-create-d.patch b/batctl/patches/0009-batctl-Allow-to-disable-automatic-interface-create-d.patch
+new file mode 100644
+index 0000000..8b6f5cd
+--- /dev/null
++++ b/batctl/patches/0009-batctl-Allow-to-disable-automatic-interface-create-d.patch
+@@ -0,0 +1,98 @@
++From: Sven Eckelmann <sven@narfation.org>
++Date: Tue, 18 Oct 2016 16:17:27 +0200
++Subject: [PATCH] batctl: Allow to disable automatic interface create/destroy
++
++Users may not want to lose their configured batman-adv soft-interface when
++they remove a single interface from it. The default configuration may not
++working well enough in the network setup of the user and thus it should be
++possible to avoid that it gets reset to it when a new interface is added
++after the last one was removed.
++
++This can be done by avoiding automatic creation of an interface when the
++command "add" is used together with the option "-M". The add would fail
++when the soft-interface disappeared for some reason and thus the
++soft-interface would not be created again with the default configuration.
++But more importantly, the "del" command can be informed with the option
++"-M" to not try to remove the soft-interface in the first place.
++
++Signed-off-by: Sven Eckelmann <sven@narfation.org>
++Signed-off-by: Simon Wunderlich <sw@simonwunderlich.de>
++---
++ man/batctl.8 |  4 +++-
++ sys.c        | 12 +++++++++---
++ 2 files changed, 12 insertions(+), 4 deletions(-)
++
++diff --git a/man/batctl.8 b/man/batctl.8
++index 37b5632..9ee0e31 100644
++--- a/man/batctl.8
+++++ b/man/batctl.8
++@@ -52,10 +52,12 @@ performances, is also included.
++ .br
++ .TP
++ .I \fBcommands:
++-.IP "\fBinterface\fP|\fBif\fP [\fBadd\fP|\fBdel iface(s)\fP]"
+++.IP "\fBinterface\fP|\fBif\fP [\fB-M\fP] [\fBadd\fP|\fBdel iface(s)\fP]"
++ If no parameter is given or the first parameter is neither "add" nor "del" the current interface settings are displayed.
++ In order to add or delete interfaces specify "add" or "del" as first argument and append the interface names you wish to
++ add or delete. Multiple interfaces can be specified.
+++The "\-M" option tells batctl to not automatically create the batman-adv interface on "add" or to destroy it when "del"
+++removed all interfaces which belonged to it.
++ .IP "\fBinterface\fP|\fBif\fP [\fBcreate\fP|\fBdestroy\fP]"
++ A batman-adv interface without attached interfaces can be created using "create". The parameter "destroy" can be used to
++ free all attached interfaces and remove batman-adv interface.
++diff --git a/sys.c b/sys.c
++index 190fd06..2cbccea 100644
++--- a/sys.c
+++++ b/sys.c
++@@ -22,6 +22,7 @@
++ 
++ #include <unistd.h>
++ #include <stdio.h>
+++#include <stdbool.h>
++ #include <stdlib.h>
++ #include <string.h>
++ #include <errno.h>
++@@ -122,6 +123,7 @@ static void interface_usage(void)
++ 	fprintf(stderr, "Usage: batctl [options] interface [parameters] [add|del iface(s)]\n");
++ 	fprintf(stderr, "       batctl [options] interface [parameters] [create|destroy]\n");
++ 	fprintf(stderr, "parameters:\n");
+++	fprintf(stderr, " \t -M disable automatic creation/removal of batman-adv interface\n");
++ 	fprintf(stderr, " \t -h print this help\n");
++ }
++ 
++@@ -385,12 +387,16 @@ int interface(char *mesh_iface, int argc, char **argv)
++ 	unsigned int cnt;
++ 	int rest_argc;
++ 	char **rest_argv;
+++	bool manual_mode = false;
++ 
++-	while ((optchar = getopt(argc, argv, "h")) != -1) {
+++	while ((optchar = getopt(argc, argv, "hM")) != -1) {
++ 		switch (optchar) {
++ 		case 'h':
++ 			interface_usage();
++ 			return EXIT_SUCCESS;
+++		case 'M':
+++			manual_mode = true;
+++			break;
++ 		default:
++ 			interface_usage();
++ 			return EXIT_FAILURE;
++@@ -465,7 +471,7 @@ int interface(char *mesh_iface, int argc, char **argv)
++ 
++ 	/* get index of batman-adv interface - or try to create it */
++ 	ifmaster = if_nametoindex(mesh_iface);
++-	if (!ifmaster && rest_argv[0][0] == 'a') {
+++	if (!manual_mode && !ifmaster && rest_argv[0][0] == 'a') {
++ 		ret = create_interface(mesh_iface);
++ 		if (ret < 0) {
++ 			fprintf(stderr,
++@@ -518,7 +524,7 @@ int interface(char *mesh_iface, int argc, char **argv)
++ 	}
++ 
++ 	/* check if there is no interface left and then destroy mesh_iface */
++-	if (rest_argv[0][0] == 'd') {
+++	if (!manual_mode && rest_argv[0][0] == 'd') {
++ 		cnt = count_interfaces(mesh_iface);
++ 		if (cnt == 0)
++ 			destroy_interface(mesh_iface);
+diff --git a/batctl/patches/0010-batctl-Move-interface-command-to-extra-file.patch b/batctl/patches/0010-batctl-Move-interface-command-to-extra-file.patch
+new file mode 100644
+index 0000000..e9c2177
+--- /dev/null
++++ b/batctl/patches/0010-batctl-Move-interface-command-to-extra-file.patch
+@@ -0,0 +1,1007 @@
++From: Sven Eckelmann <sven@narfation.org>
++Date: Tue, 18 Oct 2016 16:17:28 +0200
++Subject: [PATCH] batctl: Move interface command to extra file
++
++The interface command has nothing to do anymore more with all the other
++configuration in sysfs. Thus all the "interface" command functions should
++be placed in a separate file.
++
++Signed-off-by: Sven Eckelmann <sven@narfation.org>
++Signed-off-by: Simon Wunderlich <sw@simonwunderlich.de>
++---
++ Makefile    |   1 +
++ functions.h |   2 +
++ interface.c | 457 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
++ interface.h |  29 ++++
++ main.c      |   1 +
++ sys.c       | 420 -------------------------------------------------------
++ sys.h       |   1 -
++ 7 files changed, 490 insertions(+), 421 deletions(-)
++ create mode 100644 interface.c
++ create mode 100644 interface.h
++
++diff --git a/Makefile b/Makefile
++index 5aad8fe..57d9a4e 100755
++--- a/Makefile
+++++ b/Makefile
++@@ -30,6 +30,7 @@ OBJ += debug.o
++ OBJ += functions.o
++ OBJ += genl.o
++ OBJ += hash.o
+++OBJ += interface.o
++ OBJ += ioctl.o
++ OBJ += main.o
++ OBJ += netlink.o
++diff --git a/functions.h b/functions.h
++index 7757731..4c350f8 100644
++--- a/functions.h
+++++ b/functions.h
++@@ -31,6 +31,8 @@
++ #define ETH_STR_LEN 17
++ #define BATMAN_ADV_TAG "batman-adv:"
++ 
+++#define PATH_BUFF_LEN 200
+++
++ /* return time delta from start to end in milliseconds */
++ void start_timer(void);
++ double end_timer(void);
++diff --git a/interface.c b/interface.c
++new file mode 100644
++index 0000000..9d5590d
++--- /dev/null
+++++ b/interface.c
++@@ -0,0 +1,457 @@
+++/*
+++ * Copyright (C) 2009-2016  B.A.T.M.A.N. contributors:
+++ *
+++ * Marek Lindner <mareklindner@neomailbox.ch>
+++ *
+++ * This program is free software; you can redistribute it and/or
+++ * modify it under the terms of version 2 of the GNU General Public
+++ * License as published by the Free Software Foundation.
+++ *
+++ * This program is distributed in the hope that it will be useful, but
+++ * WITHOUT ANY WARRANTY; without even the implied warranty of
+++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+++ * General Public License for more details.
+++ *
+++ * You should have received a copy of the GNU General Public License
+++ * along with this program; if not, write to the Free Software
+++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+++ * 02110-1301, USA
+++ *
+++ */
+++
+++#include "interface.h"
+++
+++#include <unistd.h>
+++#include <stdio.h>
+++#include <stdbool.h>
+++#include <stdlib.h>
+++#include <string.h>
+++#include <errno.h>
+++#include <dirent.h>
+++#include <net/if.h>
+++#include <linux/if_link.h>
+++#include <netlink/netlink.h>
+++#include <netlink/msg.h>
+++#include <netlink/attr.h>
+++
+++#include "main.h"
+++#include "sys.h"
+++#include "functions.h"
+++
+++static void interface_usage(void)
+++{
+++	fprintf(stderr, "Usage: batctl [options] interface [parameters] [add|del iface(s)]\n");
+++	fprintf(stderr, "       batctl [options] interface [parameters] [create|destroy]\n");
+++	fprintf(stderr, "parameters:\n");
+++	fprintf(stderr, " \t -M disable automatic creation/removal of batman-adv interface\n");
+++	fprintf(stderr, " \t -h print this help\n");
+++}
+++
+++static struct nla_policy link_policy[IFLA_MAX + 1] = {
+++	[IFLA_IFNAME] = { .type = NLA_STRING, .maxlen = IFNAMSIZ },
+++	[IFLA_MASTER] = { .type = NLA_U32 },
+++};
+++
+++struct print_interfaces_rtnl_arg {
+++	int ifindex;
+++};
+++
+++static int print_interfaces_rtnl_parse(struct nl_msg *msg, void *arg)
+++{
+++	struct print_interfaces_rtnl_arg *print_arg = arg;
+++	struct nlattr *attrs[IFLA_MAX + 1];
+++	char path_buff[PATH_BUFF_LEN];
+++	struct ifinfomsg *ifm;
+++	char *ifname;
+++	int ret;
+++	const char *status;
+++	int master;
+++
+++	ifm = nlmsg_data(nlmsg_hdr(msg));
+++	ret = nlmsg_parse(nlmsg_hdr(msg), sizeof(*ifm), attrs, IFLA_MAX,
+++			  link_policy);
+++	if (ret < 0)
+++		goto err;
+++
+++	if (!attrs[IFLA_IFNAME])
+++		goto err;
+++
+++	if (!attrs[IFLA_MASTER])
+++		goto err;
+++
+++	ifname = nla_get_string(attrs[IFLA_IFNAME]);
+++	master = nla_get_u32(attrs[IFLA_MASTER]);
+++
+++	/* required on older kernels which don't prefilter the results */
+++	if (master != print_arg->ifindex)
+++		goto err;
+++
+++	snprintf(path_buff, sizeof(path_buff), SYS_IFACE_STATUS_FMT, ifname);
+++	ret = read_file("", path_buff, USE_READ_BUFF | SILENCE_ERRORS, 0, 0, 0);
+++	if (ret != EXIT_SUCCESS)
+++		status = "<error reading status>\n";
+++	else
+++		status = line_ptr;
+++
+++	printf("%s: %s", ifname, status);
+++
+++	free(line_ptr);
+++	line_ptr = NULL;
+++
+++err:
+++	return NL_OK;
+++}
+++
+++static int print_interfaces(char *mesh_iface)
+++{
+++	struct print_interfaces_rtnl_arg print_arg;
+++
+++	if (!file_exists(module_ver_path)) {
+++		fprintf(stderr, "Error - batman-adv module has not been loaded\n");
+++		return EXIT_FAILURE;
+++	}
+++
+++	print_arg.ifindex = if_nametoindex(mesh_iface);
+++	if (!print_arg.ifindex)
+++		return EXIT_FAILURE;
+++
+++	query_rtnl_link(print_arg.ifindex, print_interfaces_rtnl_parse,
+++			&print_arg);
+++
+++	return EXIT_SUCCESS;
+++}
+++
+++struct count_interfaces_rtnl_arg {
+++	int ifindex;
+++	unsigned int count;
+++};
+++
+++static int count_interfaces_rtnl_parse(struct nl_msg *msg, void *arg)
+++{
+++	struct count_interfaces_rtnl_arg *count_arg = arg;
+++	struct nlattr *attrs[IFLA_MAX + 1];
+++	struct ifinfomsg *ifm;
+++	int ret;
+++	int master;
+++
+++	ifm = nlmsg_data(nlmsg_hdr(msg));
+++	ret = nlmsg_parse(nlmsg_hdr(msg), sizeof(*ifm), attrs, IFLA_MAX,
+++			  link_policy);
+++	if (ret < 0)
+++		goto err;
+++
+++	if (!attrs[IFLA_IFNAME])
+++		goto err;
+++
+++	if (!attrs[IFLA_MASTER])
+++		goto err;
+++
+++	master = nla_get_u32(attrs[IFLA_MASTER]);
+++
+++	/* required on older kernels which don't prefilter the results */
+++	if (master != count_arg->ifindex)
+++		goto err;
+++
+++	count_arg->count++;
+++
+++err:
+++	return NL_OK;
+++}
+++
+++static unsigned int count_interfaces(char *mesh_iface)
+++{
+++	struct count_interfaces_rtnl_arg count_arg;
+++
+++	count_arg.count = 0;
+++	count_arg.ifindex = if_nametoindex(mesh_iface);
+++	if (!count_arg.ifindex)
+++		return 0;
+++
+++	query_rtnl_link(count_arg.ifindex, count_interfaces_rtnl_parse,
+++			&count_arg);
+++
+++	return count_arg.count;
+++}
+++
+++static int create_interface(const char *mesh_iface)
+++{
+++	struct ifinfomsg rt_hdr = {
+++		.ifi_family = IFLA_UNSPEC,
+++	};
+++	struct nlattr *linkinfo;
+++	struct nl_msg *msg;
+++	int err = 0;
+++	int ret;
+++
+++	msg = nlmsg_alloc_simple(RTM_NEWLINK,
+++				 NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL | NLM_F_ACK);
+++	if (!msg) {
+++		return -ENOMEM;
+++	}
+++
+++	ret = nlmsg_append(msg, &rt_hdr, sizeof(rt_hdr), NLMSG_ALIGNTO);
+++	if (ret < 0) {
+++		err = -ENOMEM;
+++		goto err_free_msg;
+++	}
+++
+++	ret = nla_put_string(msg, IFLA_IFNAME, mesh_iface);
+++	if (ret < 0) {
+++		err = -ENOMEM;
+++		goto err_free_msg;
+++	}
+++
+++	linkinfo = nla_nest_start(msg, IFLA_LINKINFO);
+++	if (!linkinfo) {
+++		err = -ENOMEM;
+++		goto err_free_msg;
+++	}
+++
+++	ret = nla_put_string(msg, IFLA_INFO_KIND, "batadv");
+++	if (ret < 0) {
+++		err = -ENOMEM;
+++		goto err_free_msg;
+++	}
+++
+++	nla_nest_end(msg, linkinfo);
+++
+++	err = netlink_simple_request(msg);
+++
+++err_free_msg:
+++	nlmsg_free(msg);
+++
+++	return err;
+++}
+++
+++static int destroy_interface(const char *mesh_iface)
+++{
+++	struct ifinfomsg rt_hdr = {
+++		.ifi_family = IFLA_UNSPEC,
+++	};
+++	struct nl_msg *msg;
+++	int err = 0;
+++	int ret;
+++
+++	msg = nlmsg_alloc_simple(RTM_DELLINK, NLM_F_REQUEST | NLM_F_ACK);
+++	if (!msg) {
+++		return -ENOMEM;
+++	}
+++
+++	ret = nlmsg_append(msg, &rt_hdr, sizeof(rt_hdr), NLMSG_ALIGNTO);
+++	if (ret < 0) {
+++		err = -ENOMEM;
+++		goto err_free_msg;
+++	}
+++
+++	ret = nla_put_string(msg, IFLA_IFNAME, mesh_iface);
+++	if (ret < 0) {
+++		err = -ENOMEM;
+++		goto err_free_msg;
+++	}
+++
+++	err = netlink_simple_request(msg);
+++
+++err_free_msg:
+++	nlmsg_free(msg);
+++
+++	return err;
+++}
+++
+++static int set_master_interface(const char *iface, unsigned int ifmaster)
+++{
+++	struct ifinfomsg rt_hdr = {
+++		.ifi_family = IFLA_UNSPEC,
+++	};
+++	struct nl_msg *msg;
+++	int err = 0;
+++	int ret;
+++
+++	msg = nlmsg_alloc_simple(RTM_SETLINK, NLM_F_REQUEST | NLM_F_ACK);
+++	if (!msg) {
+++		return -ENOMEM;
+++	}
+++
+++	ret = nlmsg_append(msg, &rt_hdr, sizeof(rt_hdr), NLMSG_ALIGNTO);
+++	if (ret < 0) {
+++		err = -ENOMEM;
+++		goto err_free_msg;
+++	}
+++
+++	ret = nla_put_string(msg, IFLA_IFNAME, iface);
+++	if (ret < 0) {
+++		err = -ENOMEM;
+++		goto err_free_msg;
+++	}
+++
+++	ret = nla_put_u32(msg, IFLA_MASTER, ifmaster);
+++	if (ret < 0) {
+++		err = -ENOMEM;
+++		goto err_free_msg;
+++	}
+++
+++	err = netlink_simple_request(msg);
+++
+++err_free_msg:
+++	nlmsg_free(msg);
+++
+++	return err;
+++}
+++
+++int interface(char *mesh_iface, int argc, char **argv)
+++{
+++	int i, optchar;
+++	int ret;
+++	unsigned int ifindex;
+++	unsigned int ifmaster;
+++	const char *long_op;
+++	unsigned int cnt;
+++	int rest_argc;
+++	char **rest_argv;
+++	bool manual_mode = false;
+++
+++	while ((optchar = getopt(argc, argv, "hM")) != -1) {
+++		switch (optchar) {
+++		case 'h':
+++			interface_usage();
+++			return EXIT_SUCCESS;
+++		case 'M':
+++			manual_mode = true;
+++			break;
+++		default:
+++			interface_usage();
+++			return EXIT_FAILURE;
+++		}
+++	}
+++
+++	rest_argc = argc - optind;
+++	rest_argv = &argv[optind];
+++
+++	if (rest_argc == 0)
+++		return print_interfaces(mesh_iface);
+++
+++	if ((strcmp(rest_argv[0], "add") != 0) && (strcmp(rest_argv[0], "a") != 0) &&
+++	    (strcmp(rest_argv[0], "del") != 0) && (strcmp(rest_argv[0], "d") != 0) &&
+++	    (strcmp(rest_argv[0], "create") != 0) && (strcmp(rest_argv[0], "c") != 0) &&
+++	    (strcmp(rest_argv[0], "destroy") != 0) && (strcmp(rest_argv[0], "D") != 0)) {
+++		fprintf(stderr, "Error - unknown argument specified: %s\n", rest_argv[0]);
+++		interface_usage();
+++		goto err;
+++	}
+++
+++	if (strcmp(rest_argv[0], "destroy") == 0)
+++		rest_argv[0][0] = 'D';
+++
+++	switch (rest_argv[0][0]) {
+++	case 'a':
+++	case 'd':
+++		if (rest_argc == 1) {
+++			fprintf(stderr,
+++				"Error - missing interface name(s) after '%s'\n",
+++				rest_argv[0]);
+++			interface_usage();
+++			goto err;
+++		}
+++		break;
+++	case 'c':
+++	case 'D':
+++		if (rest_argc != 1) {
+++			fprintf(stderr,
+++				"Error - extra parameter after '%s'\n",
+++				rest_argv[0]);
+++			interface_usage();
+++			goto err;
+++		}
+++		break;
+++	default:
+++		break;
+++	}
+++
+++	switch (rest_argv[0][0]) {
+++	case 'c':
+++		ret = create_interface(mesh_iface);
+++		if (ret < 0) {
+++			fprintf(stderr,
+++				"Error - failed to add create batman-adv interface: %s\n",
+++				strerror(-ret));
+++			goto err;
+++		}
+++		return EXIT_SUCCESS;
+++	case 'D':
+++		ret = destroy_interface(mesh_iface);
+++		if (ret < 0) {
+++			fprintf(stderr,
+++				"Error - failed to destroy batman-adv interface: %s\n",
+++				strerror(-ret));
+++			goto err;
+++		}
+++		return EXIT_SUCCESS;
+++	default:
+++		break;
+++	}
+++
+++	/* get index of batman-adv interface - or try to create it */
+++	ifmaster = if_nametoindex(mesh_iface);
+++	if (!manual_mode && !ifmaster && rest_argv[0][0] == 'a') {
+++		ret = create_interface(mesh_iface);
+++		if (ret < 0) {
+++			fprintf(stderr,
+++				"Error - failed to create batman-adv interface: %s\n",
+++				strerror(-ret));
+++			goto err;
+++		}
+++
+++		ifmaster = if_nametoindex(mesh_iface);
+++	}
+++
+++	if (!ifmaster) {
+++		ret = -ENODEV;
+++		fprintf(stderr,
+++			"Error - failed to find batman-adv interface: %s\n",
+++			strerror(-ret));
+++		goto err;
+++	}
+++
+++	/* make sure that batman-adv is loaded or was loaded by create_interface */
+++	if (!file_exists(module_ver_path)) {
+++		fprintf(stderr, "Error - batman-adv module has not been loaded\n");
+++		goto err;
+++	}
+++
+++	for (i = 1; i < rest_argc; i++) {
+++		ifindex = if_nametoindex(rest_argv[i]);
+++
+++		if (!ifindex) {
+++			fprintf(stderr, "Error - interface does not exist: %s\n", rest_argv[i]);
+++			continue;
+++		}
+++
+++		if (rest_argv[0][0] == 'a')
+++			ifindex = ifmaster;
+++		else
+++			ifindex = 0;
+++
+++		ret = set_master_interface(rest_argv[i], ifindex);
+++		if (ret < 0) {
+++			if (rest_argv[0][0] == 'a')
+++				long_op = "add";
+++			else
+++				long_op = "delete";
+++
+++			fprintf(stderr, "Error - failed to %s interface %s: %s\n",
+++				long_op, rest_argv[i], strerror(-ret));
+++			goto err;
+++		}
+++	}
+++
+++	/* check if there is no interface left and then destroy mesh_iface */
+++	if (!manual_mode && rest_argv[0][0] == 'd') {
+++		cnt = count_interfaces(mesh_iface);
+++		if (cnt == 0)
+++			destroy_interface(mesh_iface);
+++	}
+++
+++	return EXIT_SUCCESS;
+++
+++err:
+++	return EXIT_FAILURE;
+++}
++diff --git a/interface.h b/interface.h
++new file mode 100644
++index 0000000..0ea7bd5
++--- /dev/null
+++++ b/interface.h
++@@ -0,0 +1,29 @@
+++/*
+++ * Copyright (C) 2009-2016  B.A.T.M.A.N. contributors:
+++ *
+++ * Marek Lindner <mareklindner@neomailbox.ch>
+++ *
+++ * This program is free software; you can redistribute it and/or
+++ * modify it under the terms of version 2 of the GNU General Public
+++ * License as published by the Free Software Foundation.
+++ *
+++ * This program is distributed in the hope that it will be useful, but
+++ * WITHOUT ANY WARRANTY; without even the implied warranty of
+++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+++ * General Public License for more details.
+++ *
+++ * You should have received a copy of the GNU General Public License
+++ * along with this program; if not, write to the Free Software
+++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+++ * 02110-1301, USA
+++ *
+++ */
+++
+++#ifndef _BATCTL_INTERFACE_H
+++#define _BATCTL_INTERFACE_H
+++
+++#include "main.h"
+++
+++int interface(char *mesh_iface, int argc, char **argv);
+++
+++#endif
++diff --git a/main.c b/main.c
++index 5e1ecc7..e67fc40 100644
++--- a/main.c
+++++ b/main.c
++@@ -29,6 +29,7 @@
++ #include "main.h"
++ #include "sys.h"
++ #include "debug.h"
+++#include "interface.h"
++ #include "ping.h"
++ #include "translate.h"
++ #include "traceroute.h"
++diff --git a/sys.c b/sys.c
++index 2cbccea..59cbdae 100644
++--- a/sys.c
+++++ b/sys.c
++@@ -38,8 +38,6 @@
++ #include "functions.h"
++ #include "debug.h"
++ 
++-#define PATH_BUFF_LEN 200
++-
++ const char *sysfs_param_enable[] = {
++ 	"enable",
++ 	"disable",
++@@ -118,424 +116,6 @@ const struct settings_data batctl_settings[BATCTL_SETTINGS_NUM] = {
++ 	},
++ };
++ 
++-static void interface_usage(void)
++-{
++-	fprintf(stderr, "Usage: batctl [options] interface [parameters] [add|del iface(s)]\n");
++-	fprintf(stderr, "       batctl [options] interface [parameters] [create|destroy]\n");
++-	fprintf(stderr, "parameters:\n");
++-	fprintf(stderr, " \t -M disable automatic creation/removal of batman-adv interface\n");
++-	fprintf(stderr, " \t -h print this help\n");
++-}
++-
++-static struct nla_policy link_policy[IFLA_MAX + 1] = {
++-	[IFLA_IFNAME]           = { .type = NLA_STRING, .maxlen = IFNAMSIZ },
++-	[IFLA_MASTER]         = { .type = NLA_U32 },
++-};
++-
++-struct print_interfaces_rtnl_arg {
++-	int ifindex;
++-};
++-
++-static int print_interfaces_rtnl_parse(struct nl_msg *msg, void *arg)
++-{
++-	struct print_interfaces_rtnl_arg *print_arg = arg;
++-	struct nlattr *attrs[IFLA_MAX + 1];
++-	char path_buff[PATH_BUFF_LEN];
++-	struct ifinfomsg *ifm;
++-	char *ifname;
++-	int ret;
++-	const char *status;
++-	int master;
++-
++-	ifm = nlmsg_data(nlmsg_hdr(msg));
++-	ret = nlmsg_parse(nlmsg_hdr(msg), sizeof(*ifm), attrs, IFLA_MAX,
++-			  link_policy);
++-	if (ret < 0)
++-		goto err;
++-
++-	if (!attrs[IFLA_IFNAME])
++-		goto err;
++-
++-	if (!attrs[IFLA_MASTER])
++-		goto err;
++-
++-	ifname = nla_get_string(attrs[IFLA_IFNAME]);
++-	master = nla_get_u32(attrs[IFLA_MASTER]);
++-
++-	/* required on older kernels which don't prefilter the results */
++-	if (master != print_arg->ifindex)
++-		goto err;
++-
++-	snprintf(path_buff, sizeof(path_buff), SYS_IFACE_STATUS_FMT, ifname);
++-	ret = read_file("", path_buff, USE_READ_BUFF | SILENCE_ERRORS, 0, 0, 0);
++-	if (ret != EXIT_SUCCESS)
++-		status = "<error reading status>\n";
++-	else
++-		status = line_ptr;
++-
++-	printf("%s: %s", ifname, status);
++-
++-	free(line_ptr);
++-	line_ptr = NULL;
++-
++-err:
++-	return NL_OK;
++-}
++-
++-static int print_interfaces(char *mesh_iface)
++-{
++-	struct print_interfaces_rtnl_arg print_arg;
++-
++-	if (!file_exists(module_ver_path)) {
++-		fprintf(stderr, "Error - batman-adv module has not been loaded\n");
++-		return EXIT_FAILURE;
++-	}
++-
++-	print_arg.ifindex = if_nametoindex(mesh_iface);
++-	if (!print_arg.ifindex)
++-		return EXIT_FAILURE;
++-
++-	query_rtnl_link(print_arg.ifindex, print_interfaces_rtnl_parse,
++-			&print_arg);
++-
++-	return EXIT_SUCCESS;
++-}
++-
++-struct count_interfaces_rtnl_arg {
++-	int ifindex;
++-	unsigned int count;
++-};
++-
++-static int count_interfaces_rtnl_parse(struct nl_msg *msg, void *arg)
++-{
++-	struct count_interfaces_rtnl_arg *count_arg = arg;
++-	struct nlattr *attrs[IFLA_MAX + 1];
++-	struct ifinfomsg *ifm;
++-	int ret;
++-	int master;
++-
++-	ifm = nlmsg_data(nlmsg_hdr(msg));
++-	ret = nlmsg_parse(nlmsg_hdr(msg), sizeof(*ifm), attrs, IFLA_MAX,
++-			  link_policy);
++-	if (ret < 0)
++-		goto err;
++-
++-	if (!attrs[IFLA_IFNAME])
++-		goto err;
++-
++-	if (!attrs[IFLA_MASTER])
++-		goto err;
++-
++-	master = nla_get_u32(attrs[IFLA_MASTER]);
++-
++-	/* required on older kernels which don't prefilter the results */
++-	if (master != count_arg->ifindex)
++-		goto err;
++-
++-	count_arg->count++;
++-
++-err:
++-	return NL_OK;
++-}
++-
++-static unsigned int count_interfaces(char *mesh_iface)
++-{
++-	struct count_interfaces_rtnl_arg count_arg;
++-
++-	count_arg.count = 0;
++-	count_arg.ifindex = if_nametoindex(mesh_iface);
++-	if (!count_arg.ifindex)
++-		return 0;
++-
++-	query_rtnl_link(count_arg.ifindex, count_interfaces_rtnl_parse,
++-			&count_arg);
++-
++-	return count_arg.count;
++-}
++-
++-static int create_interface(const char *mesh_iface)
++-{
++-	struct ifinfomsg rt_hdr = {
++-		.ifi_family = IFLA_UNSPEC,
++-	};
++-	struct nlattr *linkinfo;
++-	struct nl_msg *msg;
++-	int err = 0;
++-	int ret;
++-
++-	msg = nlmsg_alloc_simple(RTM_NEWLINK,
++-				 NLM_F_REQUEST | NLM_F_CREATE | NLM_F_EXCL | NLM_F_ACK);
++-	if (!msg) {
++-		return -ENOMEM;
++-	}
++-
++-	ret = nlmsg_append(msg, &rt_hdr, sizeof(rt_hdr), NLMSG_ALIGNTO);
++-	if (ret < 0) {
++-		err = -ENOMEM;
++-		goto err_free_msg;
++-	}
++-
++-	ret = nla_put_string(msg, IFLA_IFNAME, mesh_iface);
++-	if (ret < 0) {
++-		err = -ENOMEM;
++-		goto err_free_msg;
++-	}
++-
++-	linkinfo = nla_nest_start(msg, IFLA_LINKINFO);
++-	if (!linkinfo) {
++-		err = -ENOMEM;
++-		goto err_free_msg;
++-	}
++-
++-	ret = nla_put_string(msg, IFLA_INFO_KIND, "batadv");
++-	if (ret < 0) {
++-		err = -ENOMEM;
++-		goto err_free_msg;
++-	}
++-
++-	nla_nest_end(msg, linkinfo);
++-
++-	err = netlink_simple_request(msg);
++-
++-err_free_msg:
++-	nlmsg_free(msg);
++-
++-	return err;
++-}
++-
++-static int destroy_interface(const char *mesh_iface)
++-{
++-	struct ifinfomsg rt_hdr = {
++-		.ifi_family = IFLA_UNSPEC,
++-	};
++-	struct nl_msg *msg;
++-	int err = 0;
++-	int ret;
++-
++-	msg = nlmsg_alloc_simple(RTM_DELLINK, NLM_F_REQUEST | NLM_F_ACK);
++-	if (!msg) {
++-		return -ENOMEM;
++-	}
++-
++-	ret = nlmsg_append(msg, &rt_hdr, sizeof(rt_hdr), NLMSG_ALIGNTO);
++-	if (ret < 0) {
++-		err = -ENOMEM;
++-		goto err_free_msg;
++-	}
++-
++-	ret = nla_put_string(msg, IFLA_IFNAME, mesh_iface);
++-	if (ret < 0) {
++-		err = -ENOMEM;
++-		goto err_free_msg;
++-	}
++-
++-	err = netlink_simple_request(msg);
++-
++-err_free_msg:
++-	nlmsg_free(msg);
++-
++-	return err;
++-}
++-
++-static int set_master_interface(const char *iface, unsigned int ifmaster)
++-{
++-	struct ifinfomsg rt_hdr = {
++-		.ifi_family = IFLA_UNSPEC,
++-	};
++-	struct nl_msg *msg;
++-	int err = 0;
++-	int ret;
++-
++-	msg = nlmsg_alloc_simple(RTM_SETLINK, NLM_F_REQUEST | NLM_F_ACK);
++-	if (!msg) {
++-		return -ENOMEM;
++-	}
++-
++-	ret = nlmsg_append(msg, &rt_hdr, sizeof(rt_hdr), NLMSG_ALIGNTO);
++-	if (ret < 0) {
++-		err = -ENOMEM;
++-		goto err_free_msg;
++-	}
++-
++-	ret = nla_put_string(msg, IFLA_IFNAME, iface);
++-	if (ret < 0) {
++-		err = -ENOMEM;
++-		goto err_free_msg;
++-	}
++-
++-	ret = nla_put_u32(msg, IFLA_MASTER, ifmaster);
++-	if (ret < 0) {
++-		err = -ENOMEM;
++-		goto err_free_msg;
++-	}
++-
++-	err = netlink_simple_request(msg);
++-
++-err_free_msg:
++-	nlmsg_free(msg);
++-
++-	return err;
++-}
++-
++-int interface(char *mesh_iface, int argc, char **argv)
++-{
++-	int i, optchar;
++-	int ret;
++-	unsigned int ifindex;
++-	unsigned int ifmaster;
++-	const char *long_op;
++-	unsigned int cnt;
++-	int rest_argc;
++-	char **rest_argv;
++-	bool manual_mode = false;
++-
++-	while ((optchar = getopt(argc, argv, "hM")) != -1) {
++-		switch (optchar) {
++-		case 'h':
++-			interface_usage();
++-			return EXIT_SUCCESS;
++-		case 'M':
++-			manual_mode = true;
++-			break;
++-		default:
++-			interface_usage();
++-			return EXIT_FAILURE;
++-		}
++-	}
++-
++-	rest_argc = argc - optind;
++-	rest_argv = &argv[optind];
++-
++-	if (rest_argc == 0)
++-		return print_interfaces(mesh_iface);
++-
++-	if ((strcmp(rest_argv[0], "add") != 0) && (strcmp(rest_argv[0], "a") != 0) &&
++-	    (strcmp(rest_argv[0], "del") != 0) && (strcmp(rest_argv[0], "d") != 0) &&
++-	    (strcmp(rest_argv[0], "create") != 0) && (strcmp(rest_argv[0], "c") != 0) &&
++-	    (strcmp(rest_argv[0], "destroy") != 0) && (strcmp(rest_argv[0], "D") != 0)) {
++-		fprintf(stderr, "Error - unknown argument specified: %s\n", rest_argv[0]);
++-		interface_usage();
++-		goto err;
++-	}
++-
++-	if (strcmp(rest_argv[0], "destroy") == 0)
++-		rest_argv[0][0] = 'D';
++-
++-	switch (rest_argv[0][0]) {
++-	case 'a':
++-	case 'd':
++-		if (rest_argc == 1) {
++-			fprintf(stderr,
++-				"Error - missing interface name(s) after '%s'\n",
++-				rest_argv[0]);
++-			interface_usage();
++-			goto err;
++-		}
++-		break;
++-	case 'c':
++-	case 'D':
++-		if (rest_argc != 1) {
++-			fprintf(stderr,
++-				"Error - extra parameter after '%s'\n",
++-				rest_argv[0]);
++-			interface_usage();
++-			goto err;
++-		}
++-		break;
++-	default:
++-		break;
++-	}
++-
++-	switch (rest_argv[0][0]) {
++-	case 'c':
++-		ret = create_interface(mesh_iface);
++-		if (ret < 0) {
++-			fprintf(stderr,
++-				"Error - failed to create batman-adv interface: %s\n",
++-				strerror(-ret));
++-			goto err;
++-		}
++-		return EXIT_SUCCESS;
++-	case 'D':
++-		ret = destroy_interface(mesh_iface);
++-		if (ret < 0) {
++-			fprintf(stderr,
++-				"Error - failed to destroy batman-adv interface: %s\n",
++-				strerror(-ret));
++-			goto err;
++-		}
++-		return EXIT_SUCCESS;
++-	default:
++-		break;
++-	}
++-
++-	/* get index of batman-adv interface - or try to create it */
++-	ifmaster = if_nametoindex(mesh_iface);
++-	if (!manual_mode && !ifmaster && rest_argv[0][0] == 'a') {
++-		ret = create_interface(mesh_iface);
++-		if (ret < 0) {
++-			fprintf(stderr,
++-				"Error - failed to create batman-adv interface: %s\n",
++-				strerror(-ret));
++-			goto err;
++-		}
++-
++-		ifmaster = if_nametoindex(mesh_iface);
++-	}
++-
++-	if (!ifmaster) {
++-		ret = -ENODEV;
++-		fprintf(stderr,
++-			"Error - failed to find batman-adv interface: %s\n",
++-			strerror(-ret));
++-		goto err;
++-	}
++-
++-	/* make sure that batman-adv is loaded or was loaded by create_interface */
++-	if (!file_exists(module_ver_path)) {
++-		fprintf(stderr, "Error - batman-adv module has not been loaded\n");
++-		goto err;
++-	}
++-
++-	for (i = 1; i < rest_argc; i++) {
++-		ifindex = if_nametoindex(rest_argv[i]);
++-
++-		if (!ifindex) {
++-			fprintf(stderr, "Error - interface does not exist: %s\n", rest_argv[i]);
++-			continue;
++-		}
++-
++-		if (rest_argv[0][0] == 'a')
++-			ifindex = ifmaster;
++-		else
++-			ifindex = 0;
++-
++-		ret = set_master_interface(rest_argv[i], ifindex);
++-		if (ret < 0) {
++-			if (rest_argv[0][0] == 'a')
++-				long_op = "add";
++-			else
++-				long_op = "delete";
++-
++-			fprintf(stderr, "Error - failed to %s interface %s: %s\n",
++-				long_op, rest_argv[i], strerror(-ret));
++-			goto err;
++-		}
++-	}
++-
++-	/* check if there is no interface left and then destroy mesh_iface */
++-	if (!manual_mode && rest_argv[0][0] == 'd') {
++-		cnt = count_interfaces(mesh_iface);
++-		if (cnt == 0)
++-			destroy_interface(mesh_iface);
++-	}
++-
++-	return EXIT_SUCCESS;
++-
++-err:
++-	return EXIT_FAILURE;
++-}
++-
++ static void log_level_usage(void)
++ {
++ 	fprintf(stderr, "Usage: batctl [options] loglevel [parameters] [level[ level[ level]]...]\n");
++diff --git a/sys.h b/sys.h
++index da2769d..be9480e 100644
++--- a/sys.h
+++++ b/sys.h
++@@ -70,7 +70,6 @@ extern const char *sysfs_param_enable[];
++ extern const char *sysfs_param_server[];
++ extern const struct settings_data batctl_settings[BATCTL_SETTINGS_NUM];
++ 
++-int interface(char *mesh_iface, int argc, char **argv);
++ int handle_loglevel(char *mesh_iface, int argc, char **argv);
++ int handle_sys_setting(char *mesh_iface, int setting, int argc, char **argv);
++ int handle_gw_setting(char *mesh_iface, int argc, char **argv);
+diff --git a/batctl/patches/0011-batctl-Move-check_mesh_iface-to-functions.c.patch b/batctl/patches/0011-batctl-Move-check_mesh_iface-to-functions.c.patch
+new file mode 100644
+index 0000000..f2a29a8
+--- /dev/null
++++ b/batctl/patches/0011-batctl-Move-check_mesh_iface-to-functions.c.patch
+@@ -0,0 +1,187 @@
++From: Sven Eckelmann <sven@narfation.org>
++Date: Tue, 18 Oct 2016 16:17:29 +0200
++Subject: [PATCH] batctl: Move check_mesh_iface* to functions.c
++
++The check_mesh_iface* functions are not used to modify anything in sysfs.
++So they are better placed in the common/shared functions file than in
++sys.c.
++
++Signed-off-by: Sven Eckelmann <sven@narfation.org>
++Signed-off-by: Simon Wunderlich <sw@simonwunderlich.de>
++---
++ functions.c | 59 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
++ functions.h |  2 ++
++ sys.c       | 56 --------------------------------------------------------
++ sys.h       |  2 --
++ 4 files changed, 61 insertions(+), 58 deletions(-)
++
++diff --git a/functions.c b/functions.c
++index 85482b4..66b2d16 100644
++--- a/functions.c
+++++ b/functions.c
++@@ -32,6 +32,7 @@
++ #include <string.h>
++ #include <errno.h>
++ #include <fcntl.h>
+++#include <dirent.h>
++ #include <sys/time.h>
++ #include <netinet/in.h>
++ #include <stdint.h>
++@@ -57,6 +58,8 @@
++ #include "debugfs.h"
++ #include "netlink.h"
++ 
+++#define PATH_BUFF_LEN 200
+++
++ static struct timespec start_time;
++ static char *host_name;
++ char *line_ptr = NULL;
++@@ -1013,3 +1016,59 @@ err_free_sock:
++ 
++ 	return err;
++ }
+++
+++int check_mesh_iface(char *mesh_iface)
+++{
+++	char *base_dev = NULL;
+++	char path_buff[PATH_BUFF_LEN];
+++	int ret = -1, vid;
+++	DIR *dir;
+++
+++	/* use the parent interface if this is a VLAN */
+++	vid = vlan_get_link(mesh_iface, &base_dev);
+++	if (vid >= 0)
+++		snprintf(path_buff, PATH_BUFF_LEN, SYS_VLAN_PATH, base_dev, vid);
+++	else
+++		snprintf(path_buff, PATH_BUFF_LEN, SYS_BATIF_PATH_FMT, mesh_iface);
+++
+++	/* try to open the mesh sys directory */
+++	dir = opendir(path_buff);
+++	if (!dir)
+++		goto out;
+++
+++	closedir(dir);
+++
+++	ret = 0;
+++out:
+++	if (base_dev)
+++		free(base_dev);
+++
+++	return ret;
+++}
+++
+++int check_mesh_iface_ownership(char *mesh_iface, char *hard_iface)
+++{
+++	char path_buff[PATH_BUFF_LEN];
+++	int res;
+++
+++	/* check if this device actually belongs to the mesh interface */
+++	snprintf(path_buff, sizeof(path_buff), SYS_MESH_IFACE_FMT, hard_iface);
+++	res = read_file("", path_buff, USE_READ_BUFF | SILENCE_ERRORS, 0, 0, 0);
+++	if (res != EXIT_SUCCESS) {
+++		fprintf(stderr, "Error - the directory '%s' could not be read: %s\n",
+++			path_buff, strerror(errno));
+++		fprintf(stderr, "Is the batman-adv module loaded and sysfs mounted ?\n");
+++		return EXIT_FAILURE;
+++	}
+++
+++	if (line_ptr[strlen(line_ptr) - 1] == '\n')
+++		line_ptr[strlen(line_ptr) - 1] = '\0';
+++
+++	if (strcmp(line_ptr, mesh_iface) != 0) {
+++		fprintf(stderr, "Error - interface %s is part of batman network %s, not %s\n",
+++			hard_iface, line_ptr, mesh_iface);
+++		return EXIT_FAILURE;
+++	}
+++
+++	return EXIT_SUCCESS;
+++}
++diff --git a/functions.h b/functions.h
++index 4c350f8..e413d6b 100644
++--- a/functions.h
+++++ b/functions.h
++@@ -50,6 +50,8 @@ struct ether_addr *resolve_mac(const char *asc);
++ int vlan_get_link(const char *ifname, char **parent);\
++ int query_rtnl_link(int ifindex, nl_recvmsg_msg_cb_t func, void *arg);
++ int netlink_simple_request(struct nl_msg *msg);
+++int check_mesh_iface(char *mesh_iface);
+++int check_mesh_iface_ownership(char *mesh_iface, char *hard_iface);
++ 
++ int print_routing_algos(void);
++ extern char *line_ptr;
++diff --git a/sys.c b/sys.c
++index 59cbdae..b524340 100644
++--- a/sys.c
+++++ b/sys.c
++@@ -511,59 +511,3 @@ free_buff:
++ out:
++ 	return res;
++ }
++-
++-int check_mesh_iface(char *mesh_iface)
++-{
++-	char *base_dev = NULL;
++-	char path_buff[PATH_BUFF_LEN];
++-	int ret = -1, vid;
++-	DIR *dir;
++-
++-	/* use the parent interface if this is a VLAN */
++-	vid = vlan_get_link(mesh_iface, &base_dev);
++-	if (vid >= 0)
++-		snprintf(path_buff, PATH_BUFF_LEN, SYS_VLAN_PATH, base_dev, vid);
++-	else
++-		snprintf(path_buff, PATH_BUFF_LEN, SYS_BATIF_PATH_FMT, mesh_iface);
++-
++-	/* try to open the mesh sys directory */
++-	dir = opendir(path_buff);
++-	if (!dir)
++-		goto out;
++-
++-	closedir(dir);
++-
++-	ret = 0;
++-out:
++-	if (base_dev)
++-		free(base_dev);
++-
++-	return ret;
++-}
++-
++-int check_mesh_iface_ownership(char *mesh_iface, char *hard_iface)
++-{
++-	char path_buff[PATH_BUFF_LEN];
++-	int res;
++-
++-	/* check if this device actually belongs to the mesh interface */
++-	snprintf(path_buff, sizeof(path_buff), SYS_MESH_IFACE_FMT, hard_iface);
++-	res = read_file("", path_buff, USE_READ_BUFF | SILENCE_ERRORS, 0, 0, 0);
++-	if (res != EXIT_SUCCESS) {
++-		fprintf(stderr, "Error - the directory '%s' could not be read: %s\n",
++-			path_buff, strerror(errno));
++-		fprintf(stderr, "Is the batman-adv module loaded and sysfs mounted ?\n");
++-		return EXIT_FAILURE;
++-	}
++-
++-	if (line_ptr[strlen(line_ptr) - 1] == '\n')
++-		line_ptr[strlen(line_ptr) - 1] = '\0';
++-
++-	if (strcmp(line_ptr, mesh_iface) != 0) {
++-		fprintf(stderr, "Error - interface %s is part of batman network %s, not %s\n",
++-			hard_iface, line_ptr, mesh_iface);
++-		return EXIT_FAILURE;
++-	}
++-
++-	return EXIT_SUCCESS;
++-}
++diff --git a/sys.h b/sys.h
++index be9480e..1365e76 100644
++--- a/sys.h
+++++ b/sys.h
++@@ -74,7 +74,5 @@ int handle_loglevel(char *mesh_iface, int argc, char **argv);
++ int handle_sys_setting(char *mesh_iface, int setting, int argc, char **argv);
++ int handle_gw_setting(char *mesh_iface, int argc, char **argv);
++ int handle_ra_setting(int argc, char **argv);
++-int check_mesh_iface(char *mesh_iface);
++-int check_mesh_iface_ownership(char *mesh_iface, char *hard_iface);
++ 
++ #endif
+diff --git a/batctl/patches/0012-batctl-Add-helper-to-generate-instant-random-bytes.patch b/batctl/patches/0012-batctl-Add-helper-to-generate-instant-random-bytes.patch
+new file mode 100644
+index 0000000..f040b84
+--- /dev/null
++++ b/batctl/patches/0012-batctl-Add-helper-to-generate-instant-random-bytes.patch
+@@ -0,0 +1,120 @@
++From: Sven Eckelmann <sven@narfation.org>
++Date: Tue, 18 Oct 2016 16:17:30 +0200
++Subject: [PATCH] batctl: Add helper to generate instant random bytes
++
++Linux provides different ways to get instant random bytes. These are not
++all supported on all systems and thus a fallback may have to be used.
++Abstract all this in a single function which can be used from different
++parts of the code.
++
++The current implementations are
++
++ * get random data from urandom pool via SYS_getrandom syscall
++ * get random data from reading /dev/urandom
++ * fallback to per-program prng initialized via the current time (seconds +
++   nanoseconds)
++
++All are tried in this order in hope to get a high quality random number
++source before falling back to some really low quality one.
++
++Signed-off-by: Sven Eckelmann <sven@narfation.org>
++Signed-off-by: Simon Wunderlich <sw@simonwunderlich.de>
++---
++ functions.c | 66 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
++ functions.h |  2 ++
++ 2 files changed, 68 insertions(+)
++
++diff --git a/functions.c b/functions.c
++index 66b2d16..abd5882 100644
++--- a/functions.c
+++++ b/functions.c
++@@ -41,6 +41,7 @@
++ #include <linux/if_link.h>
++ #include <linux/rtnetlink.h>
++ #include <linux/neighbour.h>
+++#include <sys/syscall.h>
++ #include <errno.h>
++ #include <net/if.h>
++ #include <netlink/socket.h>
++@@ -1072,3 +1073,68 @@ int check_mesh_iface_ownership(char *mesh_iface, char *hard_iface)
++ 
++ 	return EXIT_SUCCESS;
++ }
+++
+++static int get_random_bytes_syscall(void *buf __maybe_unused,
+++				    size_t buflen __maybe_unused)
+++{
+++#ifdef SYS_getrandom
+++	return syscall(SYS_getrandom, buf, buflen, 0);
+++#else
+++	return -EOPNOTSUPP;
+++#endif
+++}
+++
+++static int get_random_bytes_urandom(void *buf, size_t buflen)
+++{
+++	int fd;
+++	ssize_t r;
+++
+++	fd = open("/dev/urandom", O_RDONLY);
+++	if (fd < 0)
+++		return -EOPNOTSUPP;
+++
+++	r = read(fd, buf, buflen);
+++	close(fd);
+++	if (r < 0)
+++		return -EOPNOTSUPP;
+++
+++	if ((size_t)r != buflen)
+++		return -EOPNOTSUPP;
+++
+++	return 0;
+++}
+++
+++static int get_random_bytes_fallback(void *buf, size_t buflen)
+++{
+++	struct timespec now;
+++	static int initialized = 0;
+++	size_t i;
+++	uint8_t *bufc = buf;
+++
+++	/* this is not a good source for randomness */
+++	if (!initialized) {
+++		clock_gettime(CLOCK_MONOTONIC, &now);
+++		srand(now.tv_sec ^ now.tv_nsec);
+++		initialized = 1;
+++	}
+++
+++	for (i = 0; i < buflen; i++)
+++		bufc[i] = rand() & 0xff;
+++
+++	return 0;
+++}
+++
+++void get_random_bytes(void *buf, size_t buflen)
+++{
+++	int ret;
+++
+++	ret = get_random_bytes_syscall(buf, buflen);
+++	if (ret != -EOPNOTSUPP)
+++		return;
+++
+++	ret = get_random_bytes_urandom(buf, buflen);
+++	if (ret != -EOPNOTSUPP)
+++		return;
+++
+++	get_random_bytes_fallback(buf, buflen);
+++}
++diff --git a/functions.h b/functions.h
++index e413d6b..95cd6cf 100644
++--- a/functions.h
+++++ b/functions.h
++@@ -53,6 +53,8 @@ int netlink_simple_request(struct nl_msg *msg);
++ int check_mesh_iface(char *mesh_iface);
++ int check_mesh_iface_ownership(char *mesh_iface, char *hard_iface);
++ 
+++void get_random_bytes(void *buf, size_t buflen);
+++
++ int print_routing_algos(void);
++ extern char *line_ptr;
++ 
+diff --git a/batctl/patches/0013-batctl-Implement-non-routing-batadv_icmp-in-userspac.patch b/batctl/patches/0013-batctl-Implement-non-routing-batadv_icmp-in-userspac.patch
+new file mode 100644
+index 0000000..116b942
+--- /dev/null
++++ b/batctl/patches/0013-batctl-Implement-non-routing-batadv_icmp-in-userspac.patch
+@@ -0,0 +1,1169 @@
++From: Sven Eckelmann <sven@narfation.org>
++Date: Tue, 18 Oct 2016 16:17:31 +0200
++Subject: [PATCH] batctl: Implement non-routing batadv_icmp in userspace
++
++The current endpoint for batadv_icmp* is implemented in the kernel module
++and can be accessed via debugfs. But the debugfs cannot be accessed from
++non-default netns or when debugfs is disabled. Thus it has be possible to
++use it via the netlink infrastructure to make it compatible with future
++setups.
++
++The use of the socket file is completely removed and instead raw sockets
++with BPF filters are used to send/receive batadv_icmp_packet* directly. All
++information about interfaces and available originators are received via
++rtnetlink and the batman-adv netlink.
++
++The originators debugfs file is used when the batman-adv netlink commands
++are not available. The routing of batadv_icmp_packets is still done inside
++the kernel module.
++
++Signed-off-by: Sven Eckelmann <sven@narfation.org>
++Signed-off-by: Simon Wunderlich <sw@simonwunderlich.de>
++---
++ Makefile      |   1 +
++ icmp_helper.c | 633 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
++ icmp_helper.h |  58 ++++++
++ netlink.c     | 178 ++++++++++++++++-
++ netlink.h     |   3 +
++ ping.c        |  42 ++--
++ traceroute.c  |  42 ++--
++ 7 files changed, 895 insertions(+), 62 deletions(-)
++ create mode 100644 icmp_helper.c
++ create mode 100644 icmp_helper.h
++
++diff --git a/Makefile b/Makefile
++index 57d9a4e..cfc9465 100755
++--- a/Makefile
+++++ b/Makefile
++@@ -30,6 +30,7 @@ OBJ += debug.o
++ OBJ += functions.o
++ OBJ += genl.o
++ OBJ += hash.o
+++OBJ += icmp_helper.o
++ OBJ += interface.o
++ OBJ += ioctl.o
++ OBJ += main.o
++diff --git a/icmp_helper.c b/icmp_helper.c
++new file mode 100644
++index 0000000..87c6e15
++--- /dev/null
+++++ b/icmp_helper.c
++@@ -0,0 +1,633 @@
+++/*
+++ * Copyright (C) 2007-2016  B.A.T.M.A.N. contributors:
+++ *
+++ * Marek Lindner <mareklindner@neomailbox.ch>, Simon Wunderlich
+++ *
+++ * This program is free software; you can redistribute it and/or
+++ * modify it under the terms of version 2 of the GNU General Public
+++ * License as published by the Free Software Foundation.
+++ *
+++ * This program is distributed in the hope that it will be useful, but
+++ * WITHOUT ANY WARRANTY; without even the implied warranty of
+++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+++ * General Public License for more details.
+++ *
+++ * You should have received a copy of the GNU General Public License
+++ * along with this program; if not, write to the Free Software
+++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+++ * 02110-1301, USA
+++ *
+++ */
+++
+++#include "icmp_helper.h"
+++#include "main.h"
+++
+++#include <errno.h>
+++#include <linux/filter.h>
+++#include <linux/if_packet.h>
+++#include <net/ethernet.h>
+++#include <netinet/ether.h>
+++#include <stdbool.h>
+++#include <stdint.h>
+++#include <stdlib.h>
+++#include <string.h>
+++#include <sys/ioctl.h>
+++#include <sys/select.h>
+++#include <sys/socket.h>
+++#include <sys/uio.h>
+++#include <unistd.h>
+++
+++#include "debug.h"
+++#include "debugfs.h"
+++#include "functions.h"
+++#include "list.h"
+++#include "netlink.h"
+++#include "packet.h"
+++
+++#ifndef ETH_P_BATMAN
+++#define ETH_P_BATMAN	0x4305
+++#endif /* ETH_P_BATMAN */
+++
+++static LIST_HEAD(interface_list);
+++static size_t direct_reply_len;
+++static uint8_t uid;
+++static uint8_t primary_mac[ETH_ALEN];
+++static uint8_t icmp_buffer[BATADV_ICMP_MAX_PACKET_SIZE];
+++
+++#define BATADV_ICMP_MIN_PACKET_SIZE sizeof(struct batadv_icmp_packet)
+++
+++#define BADADV_ICMP_ETH_OFFSET(member) \
+++	(ETH_HLEN + offsetof(struct batadv_icmp_packet, member))
+++
+++static struct icmp_interface *icmp_interface_find(const char *ifname)
+++{
+++	struct icmp_interface *found = NULL;
+++	struct icmp_interface *iface;
+++
+++	list_for_each_entry(iface, &interface_list, list) {
+++		if (strcmp(iface->name, ifname) == 0) {
+++			found = iface;
+++			break;
+++		}
+++	}
+++
+++	return found;
+++}
+++
+++static bool icmp_interfaces_is_my_mac(uint8_t dst[ETH_ALEN])
+++{
+++	struct icmp_interface *iface;
+++
+++	list_for_each_entry(iface, &interface_list, list) {
+++		if (memcmp(iface->mac, dst, ETH_ALEN) == 0)
+++			return true;
+++	}
+++
+++	return false;
+++}
+++
+++void icmp_interface_destroy(struct icmp_interface *iface)
+++{
+++	close(iface->sock);
+++	list_del(&iface->list);
+++	free(iface);
+++}
+++
+++static int icmp_interface_filter(int sock, int uid)
+++{
+++	struct sock_fprog filter;
+++	struct sock_filter accept_icmp[] = {
+++		/* load ethernet proto */
+++		BPF_STMT(BPF_LD + BPF_H + BPF_ABS,
+++			 offsetof(struct ether_header, ether_type)),
+++		/* jump to ret 0 when it is != 0x4305 */
+++		BPF_JUMP(BPF_JMP + BPF_JEQ + BPF_K,
+++			 ETH_P_BATMAN,
+++			 0, 14),
+++		/* load pktlen */
+++		BPF_STMT(BPF_LD + BPF_W + BPF_LEN,
+++			 0),
+++		/* jump to ret 0 when it is < 34 */
+++		BPF_JUMP(BPF_JMP + BPF_JGE + BPF_K,
+++			 ETH_HLEN + BATADV_ICMP_MIN_PACKET_SIZE,
+++			 0, 12),
+++		/* jump to ret 0 when it is > 130 */
+++		BPF_JUMP(BPF_JMP + BPF_JGT + BPF_K,
+++			 ETH_HLEN + BATADV_ICMP_MAX_PACKET_SIZE,
+++			 11, 0),
+++		/* load batman-adv type */
+++		BPF_STMT(BPF_LD + BPF_B + BPF_ABS,
+++			 BADADV_ICMP_ETH_OFFSET(packet_type)),
+++		/* jump to ret 0 when it is != BATADV_ICMP */
+++		BPF_JUMP(BPF_JMP + BPF_JEQ + BPF_K,
+++			 BATADV_ICMP,
+++			 0, 9),
+++		/* load batman-adv version */
+++		BPF_STMT(BPF_LD + BPF_B + BPF_ABS,
+++			 BADADV_ICMP_ETH_OFFSET(version)),
+++		/* jump to ret 0 when it is != 15 */
+++		BPF_JUMP(BPF_JMP + BPF_JEQ + BPF_K,
+++			 BATADV_COMPAT_VERSION,
+++			 0, 7),
+++		/* load batman-adv icmp msg_type */
+++		BPF_STMT(BPF_LD + BPF_B + BPF_ABS,
+++			 BADADV_ICMP_ETH_OFFSET(msg_type)),
+++		/* accept BATADV_ECHO_REPLY or go to next check */
+++		BPF_JUMP(BPF_JMP + BPF_JEQ + BPF_K,
+++			 BATADV_ECHO_REPLY,
+++			 2, 0),
+++		/* accept BATADV_DESTINATION_UNREACHABLE or go to next check */
+++		BPF_JUMP(BPF_JMP + BPF_JEQ + BPF_K,
+++			 BATADV_DESTINATION_UNREACHABLE,
+++			 1, 0),
+++		/* accept BATADV_TTL_EXCEEDED or go to ret 0 */
+++		BPF_JUMP(BPF_JMP + BPF_JEQ + BPF_K,
+++			 BATADV_TTL_EXCEEDED,
+++			 0, 3),
+++		/* load batman-adv icmp uid */
+++		BPF_STMT(BPF_LD + BPF_B + BPF_ABS,
+++			 BADADV_ICMP_ETH_OFFSET(uid)),
+++		/* jump to ret 0 when it is not our uid */
+++		BPF_JUMP(BPF_JMP + BPF_JEQ + BPF_K,
+++			 uid,
+++			 0, 1),
+++		/* accept 130 bytes */
+++		BPF_STMT(BPF_RET + BPF_K,
+++			 ETH_HLEN + BATADV_ICMP_MAX_PACKET_SIZE),
+++		/* ret 0 -> reject packet */
+++		BPF_STMT(BPF_RET + BPF_K,
+++			 0),
+++	};
+++
+++	memset(&filter, 0, sizeof(filter));
+++	filter.len = sizeof(accept_icmp) / sizeof(*accept_icmp);
+++	filter.filter = accept_icmp;
+++
+++	if (setsockopt(sock, SOL_SOCKET, SO_ATTACH_FILTER, &filter,
+++		       sizeof(filter)))
+++		return -1;
+++
+++	return 0;
+++}
+++
+++static int icmp_interface_add(const char *ifname, const uint8_t mac[ETH_ALEN])
+++{
+++	struct icmp_interface *iface;
+++	struct sockaddr_ll sll;
+++	struct ifreq req;
+++	int ret;
+++
+++	iface = malloc(sizeof(*iface));
+++	if (!iface)
+++		return -ENOMEM;
+++
+++	iface->mark = 1;
+++	memcpy(iface->mac, mac, ETH_ALEN);
+++
+++	strncpy(iface->name, ifname, IFNAMSIZ);
+++	iface->name[sizeof(iface->name) - 1] = '\0';
+++
+++	iface->sock = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+++	if (iface->sock < 0) {
+++		fprintf(stderr, "Error - can't create raw socket: %s\n", strerror(errno));
+++		ret = -errno;
+++		goto free_iface;
+++	}
+++
+++	memset(&req, 0, sizeof(struct ifreq));
+++	strncpy(req.ifr_name, ifname, IFNAMSIZ);
+++	req.ifr_name[sizeof(req.ifr_name) - 1] = '\0';
+++
+++	ret = ioctl(iface->sock, SIOCGIFINDEX, &req);
+++	if (ret < 0) {
+++		fprintf(stderr, "Error - can't create raw socket (SIOCGIFINDEX): %s\n", strerror(errno));
+++		ret = -errno;
+++		goto close_sock;
+++	}
+++
+++	memset(&sll, 0, sizeof(sll));
+++	sll.sll_family = AF_PACKET;
+++	sll.sll_protocol = htons(ETH_P_ALL);
+++	sll.sll_pkttype = PACKET_HOST;
+++	sll.sll_ifindex = req.ifr_ifindex;
+++
+++	ret = bind(iface->sock, (struct sockaddr *)&sll, sizeof(struct sockaddr_ll));
+++	if (ret < 0) {
+++		fprintf(stderr, "Error - can't bind raw socket: %s\n", strerror(errno));
+++		ret = -errno;
+++		goto close_sock;
+++	}
+++
+++	ret = icmp_interface_filter(iface->sock, uid);
+++	if (ret < 0) {
+++		fprintf(stderr, "Error - can't add filter to raw socket: %s\n", strerror(-ret));
+++		goto close_sock;
+++	}
+++
+++	list_add(&iface->list, &interface_list);
+++
+++	return 0;
+++
+++close_sock:
+++	close(iface->sock);
+++free_iface:
+++	free(iface);
+++
+++	return ret;
+++}
+++
+++int icmp_interfaces_init(void)
+++{
+++	get_random_bytes(&uid, 1);
+++
+++	return 0;
+++}
+++
+++static struct nla_policy link_policy[IFLA_MAX + 1] = {
+++	[IFLA_IFNAME] = { .type = NLA_STRING, .maxlen = IFNAMSIZ },
+++	[IFLA_MASTER] = { .type = NLA_U32 },
+++	[IFLA_ADDRESS] = { .type = NLA_UNSPEC,
+++			   .minlen = ETH_ALEN,
+++			   .maxlen = ETH_ALEN,
+++	},
+++};
+++
+++struct icmp_interface_update_arg {
+++	int ifindex;
+++};
+++
+++static int icmp_interface_update_parse(struct nl_msg *msg, void *arg)
+++{
+++	struct icmp_interface_update_arg *update_arg = arg;
+++	struct nlattr *attrs[IFLA_MAX + 1];
+++	struct icmp_interface *iface;
+++	struct ifinfomsg *ifm;
+++	char *ifname;
+++	int ret;
+++	int master;
+++	uint8_t *mac;
+++
+++	ifm = nlmsg_data(nlmsg_hdr(msg));
+++	ret = nlmsg_parse(nlmsg_hdr(msg), sizeof(*ifm), attrs, IFLA_MAX,
+++			  link_policy);
+++	if (ret < 0)
+++		goto err;
+++
+++	if (!attrs[IFLA_IFNAME])
+++		goto err;
+++
+++	if (!attrs[IFLA_MASTER])
+++		goto err;
+++
+++	if (!attrs[IFLA_ADDRESS])
+++		goto err;
+++
+++	ifname = nla_get_string(attrs[IFLA_IFNAME]);
+++	master = nla_get_u32(attrs[IFLA_MASTER]);
+++	mac = nla_data(attrs[IFLA_ADDRESS]);
+++
+++	/* required on older kernels which don't prefilter the results */
+++	if (master != update_arg->ifindex)
+++		goto err;
+++
+++	/* update or add interface */
+++	iface = icmp_interface_find(ifname);
+++	if (!iface) {
+++		icmp_interface_add(ifname, mac);
+++		goto err;
+++	}
+++
+++	/* update */
+++	iface->mark = 1;
+++	memcpy(iface->mac, mac, ETH_ALEN);
+++
+++err:
+++	return NL_OK;
+++}
+++
+++static int get_nexthop_debugfs(const char *mesh_iface,
+++			       struct ether_addr *mac,
+++			       uint8_t nexthop[ETH_ALEN],
+++			       char ifname[IF_NAMESIZE])
+++{
+++	char *tptr;
+++	char *temp1, *temp2;
+++	char *dest, *neigh, *iface;
+++	int lnum, tnum;
+++	struct ether_addr *mac_tmp;
+++	char path[1024];
+++	FILE *f = NULL;
+++	size_t len = 0;
+++	char *line = NULL;
+++	char *primary_info;
+++
+++	debugfs_make_path(DEBUG_BATIF_PATH_FMT "/" "originators", mesh_iface, path, sizeof(path));
+++
+++	f = fopen(path, "r");
+++	if (!f)
+++		return -EOPNOTSUPP;
+++
+++	lnum = 0;
+++	while (getline(&line, &len, f) != -1) {
+++		lnum++;
+++
+++		/* find primary mac */
+++		if (lnum == 1) {
+++			primary_info = strstr(line, "MainIF/MAC: ");
+++			if (!primary_info)
+++				continue;
+++
+++			primary_info += 12;
+++			temp1 = strstr(primary_info, "/");
+++			if (!temp1)
+++				continue;
+++
+++			temp1++;
+++			temp2 = strstr(line, " ");
+++			if (!temp2)
+++				continue;
+++
+++			temp2[0] = '\0';
+++			mac_tmp = ether_aton(temp1);
+++			if (!mac_tmp)
+++				continue;
+++
+++			memcpy(primary_mac, mac_tmp, ETH_ALEN);
+++		}
+++
+++		if (lnum < 3)
+++			continue;
+++
+++		/* find correct neighbor */
+++		for (tptr = line, tnum = 0;; tptr = NULL, tnum++) {
+++			tptr = strtok_r(tptr, "\t []()", &temp2);
+++			if (!tptr)
+++				break;
+++			switch (tnum) {
+++			case 0: dest = tptr; break;
+++			case 2: break;
+++			case 3: neigh = tptr; break;
+++			case 4: iface = tptr; break;
+++			default: break;
+++			}
+++		}
+++		if (tnum <= 4)
+++			continue;
+++
+++		mac_tmp = ether_aton(dest);
+++		if (!mac_tmp || memcmp(mac_tmp, mac, ETH_ALEN) != 0)
+++			continue;
+++
+++		mac_tmp = ether_aton(neigh);
+++		if (!mac_tmp)
+++			continue;
+++
+++		memcpy(nexthop, mac_tmp, ETH_ALEN);
+++		strncpy(ifname, iface, IF_NAMESIZE);
+++		ifname[IF_NAMESIZE - 1] = '\0';
+++		break;
+++	}
+++	free(line);
+++	fclose(f);
+++
+++	return 0;
+++}
+++
+++static void icmp_interface_unmark(void)
+++{
+++	struct icmp_interface *iface;
+++
+++	list_for_each_entry(iface, &interface_list, list)
+++		iface->mark = 0;
+++}
+++
+++
+++static void icmp_interface_sweep(void)
+++{
+++	struct icmp_interface *iface, *safe;
+++
+++	list_for_each_entry_safe(iface, safe, &interface_list, list) {
+++		if (iface->mark)
+++			continue;
+++
+++		icmp_interface_destroy(iface);
+++	}
+++}
+++
+++static int icmp_interface_update(const char *mesh_iface)
+++{
+++	struct icmp_interface_update_arg update_arg;
+++
+++	update_arg.ifindex = if_nametoindex(mesh_iface);
+++	if (!update_arg.ifindex)
+++		return -errno;
+++
+++	/* unmark current interface - will be marked again by query */
+++	icmp_interface_unmark();
+++
+++	query_rtnl_link(update_arg.ifindex, icmp_interface_update_parse,
+++			&update_arg);
+++
+++	/* remove old interfaces */
+++	icmp_interface_sweep();
+++
+++	get_primarymac_netlink(mesh_iface, primary_mac);
+++
+++	return 0;
+++}
+++
+++static int icmp_interface_send(struct batadv_icmp_header *icmp_packet,
+++			       size_t packet_len, struct icmp_interface *iface,
+++			       uint8_t nexthop[ETH_ALEN])
+++{
+++	struct ether_header header;
+++	struct iovec vector[2];
+++
+++	header.ether_type = htons(ETH_P_BATMAN);
+++	memcpy(header.ether_shost, iface->mac, ETH_ALEN);
+++	memcpy(header.ether_dhost, nexthop, ETH_ALEN);
+++
+++	vector[0].iov_base = &header;
+++	vector[0].iov_len  = sizeof(struct ether_header);
+++	vector[1].iov_base = icmp_packet;
+++	vector[1].iov_len  = packet_len;
+++
+++	return (int)writev(iface->sock, vector, 2);
+++}
+++
+++int icmp_interface_write(const char *mesh_iface,
+++			 struct batadv_icmp_header *icmp_packet, size_t len)
+++{
+++	struct batadv_icmp_packet_rr *icmp_packet_rr;
+++	struct icmp_interface *iface;
+++	uint8_t nexthop[ETH_ALEN];
+++	char ifname[IF_NAMESIZE];
+++	struct ether_addr mac;
+++	size_t packet_len;
+++	int ret;
+++
+++	if (len < sizeof(*icmp_packet))
+++		return -EINVAL;
+++
+++	if (len >= BATADV_ICMP_MAX_PACKET_SIZE)
+++		packet_len = BATADV_ICMP_MAX_PACKET_SIZE;
+++	else
+++		packet_len = len;
+++
+++	if (icmp_packet->packet_type != BATADV_ICMP)
+++		return -EINVAL;
+++
+++	if (icmp_packet->msg_type != BATADV_ECHO_REQUEST)
+++		return -EINVAL;
+++
+++	icmp_interface_update(mesh_iface);
+++
+++	if (list_empty(&interface_list))
+++		return -EFAULT;
+++
+++	/* find best neighbor */
+++	memcpy(&mac, icmp_packet->dst, ETH_ALEN);
+++
+++	ret = get_nexthop_netlink(mesh_iface, &mac, nexthop, ifname);
+++	if (ret == -EOPNOTSUPP)
+++		ret = get_nexthop_debugfs(mesh_iface, &mac, nexthop, ifname);
+++	if (ret < 0)
+++		goto dst_unreachable;
+++
+++	iface = icmp_interface_find(ifname);
+++	if (!iface)
+++		goto dst_unreachable;
+++
+++	direct_reply_len = 0;
+++
+++	icmp_packet->uid = uid;
+++	memcpy(icmp_packet->orig, primary_mac, ETH_ALEN);
+++
+++	/* start RR packet */
+++	icmp_packet_rr = (struct batadv_icmp_packet_rr *)icmp_packet;
+++	if (packet_len == sizeof(*icmp_packet_rr))
+++		memcpy(icmp_packet_rr->rr[0], iface->mac, ETH_ALEN);
+++
+++	return icmp_interface_send(icmp_packet, packet_len, iface, nexthop);
+++
+++dst_unreachable:
+++	memcpy(icmp_buffer, icmp_packet, packet_len);
+++	icmp_packet = (struct batadv_icmp_header *)icmp_buffer;
+++	icmp_packet->msg_type = BATADV_DESTINATION_UNREACHABLE;
+++	direct_reply_len = packet_len;
+++	return 0;
+++}
+++
+++static int icmp_interface_preselect(fd_set *read_sockets)
+++{
+++	struct icmp_interface *iface;
+++	int max = 0;
+++
+++	FD_ZERO(read_sockets);
+++
+++	list_for_each_entry(iface, &interface_list, list) {
+++		FD_SET(iface->sock, read_sockets);
+++		if (max <= iface->sock)
+++			max = iface->sock + 1;
+++	}
+++
+++	return max;
+++}
+++
+++static ssize_t icmp_interface_get_read_sock(fd_set *read_sockets,
+++					    struct icmp_interface **piface)
+++{
+++	struct icmp_interface *iface;
+++	int sock = -1;
+++
+++	list_for_each_entry(iface, &interface_list, list) {
+++		if (!FD_ISSET(iface->sock, read_sockets))
+++			continue;
+++
+++		sock = iface->sock;
+++		*piface = iface;
+++		break;
+++	}
+++
+++	return sock;
+++}
+++
+++ssize_t icmp_interface_read(struct batadv_icmp_header *icmp_packet, size_t len,
+++			    struct timeval *tv)
+++{
+++	struct batadv_icmp_packet_rr *icmp_packet_rr;
+++	struct icmp_interface *iface;
+++	struct ether_header header;
+++	struct iovec vector[2];
+++	fd_set read_sockets;
+++	size_t packet_len;
+++	int max_sock;
+++	ssize_t read_len;
+++	int read_sock;
+++	int res;
+++
+++	if (len < sizeof(*icmp_packet))
+++		return -EINVAL;
+++
+++	if (len >= BATADV_ICMP_MAX_PACKET_SIZE)
+++		packet_len = BATADV_ICMP_MAX_PACKET_SIZE;
+++	else
+++		packet_len = len;
+++
+++	if (direct_reply_len > 0) {
+++		memcpy(icmp_packet, icmp_buffer, packet_len);
+++		direct_reply_len = 0;
+++		return (ssize_t)packet_len;
+++	}
+++
+++retry:
+++	max_sock = icmp_interface_preselect(&read_sockets);
+++
+++	res = select(max_sock, &read_sockets, NULL, NULL, tv);
+++	/* timeout, or < 0 error */
+++	if (res <= 0)
+++		return res;
+++
+++	read_sock = icmp_interface_get_read_sock(&read_sockets, &iface);
+++	if (read_sock < 0)
+++		return read_sock;
+++
+++	vector[0].iov_base = &header;
+++	vector[0].iov_len  = sizeof(struct ether_header);
+++	vector[1].iov_base = icmp_packet;
+++	vector[1].iov_len  = packet_len;
+++
+++	read_len = readv(read_sock, vector, 2);
+++	if (read_len < 0)
+++		return read_len;
+++
+++	if (read_len < ETH_HLEN)
+++		goto retry;
+++
+++	read_len -= ETH_HLEN;
+++
+++	if (read_len < (ssize_t)sizeof(*icmp_packet))
+++		goto retry;
+++
+++	if (!icmp_interfaces_is_my_mac(icmp_packet->dst))
+++		goto retry;
+++
+++	/* end RR packet */
+++	icmp_packet_rr = (struct batadv_icmp_packet_rr *)icmp_packet;
+++	if (read_len == sizeof(*icmp_packet_rr) &&
+++	    icmp_packet_rr->rr_cur < BATADV_RR_LEN) {
+++		memcpy(icmp_packet_rr->rr[icmp_packet_rr->rr_cur], iface->mac,
+++		       ETH_ALEN);
+++		icmp_packet_rr->rr_cur++;
+++	}
+++
+++	return read_len;
+++}
+++
+++void icmp_interfaces_clean(void)
+++{
+++	struct icmp_interface *iface, *safe;
+++
+++	list_for_each_entry_safe(iface, safe, &interface_list, list)
+++		icmp_interface_destroy(iface);
+++}
++diff --git a/icmp_helper.h b/icmp_helper.h
++new file mode 100644
++index 0000000..37971da
++--- /dev/null
+++++ b/icmp_helper.h
++@@ -0,0 +1,58 @@
+++/*
+++ * Copyright (C) 2007-2016  B.A.T.M.A.N. contributors:
+++ *
+++ * Andreas Langer <an.langer@gmx.de>, Marek Lindner <mareklindner@neomailbox.ch>
+++ *
+++ * This program is free software; you can redistribute it and/or
+++ * modify it under the terms of version 2 of the GNU General Public
+++ * License as published by the Free Software Foundation.
+++ *
+++ * This program is distributed in the hope that it will be useful, but
+++ * WITHOUT ANY WARRANTY; without even the implied warranty of
+++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+++ * General Public License for more details.
+++ *
+++ * You should have received a copy of the GNU General Public License
+++ * along with this program; if not, write to the Free Software
+++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+++ * 02110-1301, USA
+++ *
+++ */
+++
+++#ifndef _BATCTL_ICMP_HELPER_H
+++#define _BATCTL_ICMP_HELPER_H
+++
+++#include "main.h"
+++
+++#include <linux/if_link.h>
+++#include <net/ethernet.h>
+++#include <net/if.h>
+++#include <netlink/netlink.h>
+++#include <netlink/msg.h>
+++#include <netlink/attr.h>
+++#include <stddef.h>
+++#include <stdint.h>
+++
+++#include "list.h"
+++#include "packet.h"
+++
+++struct timeval;
+++
+++struct icmp_interface {
+++	char name[IFNAMSIZ];
+++	uint8_t mac[ETH_ALEN];
+++
+++	int sock;
+++
+++	int mark;
+++	struct list_head list;
+++};
+++
+++int icmp_interfaces_init(void);
+++int icmp_interface_write(const char *mesh_iface,
+++			 struct batadv_icmp_header *icmp_packet, size_t len);
+++void icmp_interfaces_clean(void);
+++ssize_t icmp_interface_read(struct batadv_icmp_header *icmp_packet, size_t len,
+++			    struct timeval *tv);
+++
+++#endif
++diff --git a/netlink.c b/netlink.c
++index 8fce3d8..5f4325b 100644
++--- a/netlink.c
+++++ b/netlink.c
++@@ -1309,7 +1309,7 @@ static int nlquery_stop_cb(struct nl_msg *msg, void *arg)
++ }
++ 
++ static int netlink_query_common(const char *mesh_iface, uint8_t nl_cmd,
++-				nl_recvmsg_msg_cb_t callback,
+++				nl_recvmsg_msg_cb_t callback, int flags,
++ 				struct nlquery_opts *query_opts)
++ {
++ 	struct nl_sock *sock;
++@@ -1359,7 +1359,7 @@ static int netlink_query_common(const char *mesh_iface, uint8_t nl_cmd,
++ 		goto err_free_cb;
++ 	}
++ 
++-	genlmsg_put(msg, NL_AUTO_PID, NL_AUTO_SEQ, family, 0, NLM_F_DUMP,
+++	genlmsg_put(msg, NL_AUTO_PID, NL_AUTO_SEQ, family, 0, flags,
++ 		    nl_cmd, 1);
++ 
++ 	nla_put_u32(msg, BATADV_ATTR_MESH_IFINDEX, ifindex);
++@@ -1448,7 +1448,8 @@ int translate_mac_netlink(const char *mesh_iface, const struct ether_addr *mac,
++ 
++ 	ret = netlink_query_common(mesh_iface,
++ 				   BATADV_CMD_GET_TRANSTABLE_GLOBAL,
++-			           translate_mac_netlink_cb, &opts.query_opts);
+++			           translate_mac_netlink_cb, NLM_F_DUMP,
+++				   &opts.query_opts);
++ 	if (ret < 0)
++ 		return ret;
++ 
++@@ -1459,3 +1460,174 @@ int translate_mac_netlink(const char *mesh_iface, const struct ether_addr *mac,
++ 
++ 	return 0;
++ }
+++
+++static const int get_nexthop_netlink_mandatory[] = {
+++	BATADV_ATTR_ORIG_ADDRESS,
+++	BATADV_ATTR_NEIGH_ADDRESS,
+++	BATADV_ATTR_HARD_IFINDEX,
+++};
+++
+++struct get_nexthop_netlink_opts {
+++	struct ether_addr mac;
+++	uint8_t *nexthop;
+++	char *ifname;
+++	bool found;
+++	struct nlquery_opts query_opts;
+++};
+++
+++static int get_nexthop_netlink_cb(struct nl_msg *msg, void *arg)
+++{
+++	struct nlattr *attrs[BATADV_ATTR_MAX+1];
+++	struct nlmsghdr *nlh = nlmsg_hdr(msg);
+++	struct nlquery_opts *query_opts = arg;
+++	struct get_nexthop_netlink_opts *opts;
+++	struct genlmsghdr *ghdr;
+++	const uint8_t *orig;
+++	const uint8_t *neigh;
+++	uint32_t index;
+++	const char *ifname;
+++
+++	opts = container_of(query_opts, struct get_nexthop_netlink_opts,
+++			    query_opts);
+++
+++	if (!genlmsg_valid_hdr(nlh, 0))
+++		return NL_OK;
+++
+++	ghdr = nlmsg_data(nlh);
+++
+++	if (ghdr->cmd != BATADV_CMD_GET_ORIGINATORS)
+++		return NL_OK;
+++
+++	if (nla_parse(attrs, BATADV_ATTR_MAX, genlmsg_attrdata(ghdr, 0),
+++		      genlmsg_len(ghdr), batadv_netlink_policy)) {
+++		return NL_OK;
+++	}
+++
+++	if (missing_mandatory_attrs(attrs, get_nexthop_netlink_mandatory,
+++				    ARRAY_SIZE(get_nexthop_netlink_mandatory)))
+++		return NL_OK;
+++
+++	orig = nla_data(attrs[BATADV_ATTR_ORIG_ADDRESS]);
+++	neigh = nla_data(attrs[BATADV_ATTR_NEIGH_ADDRESS]);
+++	index = nla_get_u32(attrs[BATADV_ATTR_HARD_IFINDEX]);
+++
+++	if (!attrs[BATADV_ATTR_FLAG_BEST])
+++		return NL_OK;
+++
+++	if (memcmp(&opts->mac, orig, ETH_ALEN) != 0)
+++		return NL_OK;
+++
+++	/* save result */
+++	memcpy(opts->nexthop, neigh, ETH_ALEN);
+++	ifname = if_indextoname(index, opts->ifname);
+++	if (!ifname)
+++		return NL_OK;
+++
+++	opts->found = true;
+++	opts->query_opts.err = 0;
+++
+++	return NL_STOP;
+++}
+++
+++int get_nexthop_netlink(const char *mesh_iface, const struct ether_addr *mac,
+++			uint8_t *nexthop, char *ifname)
+++{
+++	struct get_nexthop_netlink_opts opts = {
+++		.nexthop = 0,
+++		.found = false,
+++		.query_opts = {
+++			.err = 0,
+++		},
+++	};
+++	int ret;
+++
+++	memcpy(&opts.mac, mac, ETH_ALEN);
+++	opts.nexthop = nexthop;
+++	opts.ifname = ifname;
+++
+++	ret = netlink_query_common(mesh_iface,  BATADV_CMD_GET_ORIGINATORS,
+++			           get_nexthop_netlink_cb, NLM_F_DUMP,
+++				   &opts.query_opts);
+++	if (ret < 0)
+++		return ret;
+++
+++	if (!opts.found)
+++		return -ENOENT;
+++
+++	return 0;
+++}
+++
+++static const int get_primarymac_netlink_mandatory[] = {
+++	BATADV_ATTR_HARD_ADDRESS,
+++};
+++
+++struct get_primarymac_netlink_opts {
+++	uint8_t *primarymac;
+++	bool found;
+++	struct nlquery_opts query_opts;
+++};
+++
+++static int get_primarymac_netlink_cb(struct nl_msg *msg, void *arg)
+++{
+++	struct nlattr *attrs[BATADV_ATTR_MAX+1];
+++	struct nlmsghdr *nlh = nlmsg_hdr(msg);
+++	struct nlquery_opts *query_opts = arg;
+++	struct get_primarymac_netlink_opts *opts;
+++	struct genlmsghdr *ghdr;
+++	const uint8_t *primary_mac;
+++
+++	opts = container_of(query_opts, struct get_primarymac_netlink_opts,
+++			    query_opts);
+++
+++	if (!genlmsg_valid_hdr(nlh, 0))
+++		return NL_OK;
+++
+++	ghdr = nlmsg_data(nlh);
+++
+++	if (ghdr->cmd != BATADV_CMD_GET_MESH_INFO)
+++		return NL_OK;
+++
+++	if (nla_parse(attrs, BATADV_ATTR_MAX, genlmsg_attrdata(ghdr, 0),
+++		      genlmsg_len(ghdr), batadv_netlink_policy)) {
+++		return NL_OK;
+++	}
+++
+++	if (missing_mandatory_attrs(attrs, get_primarymac_netlink_mandatory,
+++				    ARRAY_SIZE(get_primarymac_netlink_mandatory)))
+++		return NL_OK;
+++
+++	primary_mac = nla_data(attrs[BATADV_ATTR_HARD_ADDRESS]);
+++
+++	/* save result */
+++	memcpy(opts->primarymac, primary_mac, ETH_ALEN);
+++
+++	opts->found = true;
+++	opts->query_opts.err = 0;
+++
+++	return NL_STOP;
+++}
+++
+++int get_primarymac_netlink(const char *mesh_iface, uint8_t *primarymac)
+++{
+++	struct get_primarymac_netlink_opts opts = {
+++		.primarymac = 0,
+++		.found = false,
+++		.query_opts = {
+++			.err = 0,
+++		},
+++	};
+++	int ret;
+++
+++	opts.primarymac = primarymac;
+++
+++	ret = netlink_query_common(mesh_iface, BATADV_CMD_GET_MESH_INFO,
+++			           get_primarymac_netlink_cb, 0,
+++				   &opts.query_opts);
+++	if (ret < 0)
+++		return ret;
+++
+++	if (!opts.found)
+++		return -ENOENT;
+++
+++	return 0;
+++}
++diff --git a/netlink.h b/netlink.h
++index b2084fb..3e7713d 100644
++--- a/netlink.h
+++++ b/netlink.h
++@@ -47,6 +47,9 @@ int netlink_print_bla_backbone(char *mesh_iface, char *orig_iface, int read_opt,
++ 
++ int translate_mac_netlink(const char *mesh_iface, const struct ether_addr *mac,
++ 			  struct ether_addr *mac_out);
+++int get_nexthop_netlink(const char *mesh_iface, const struct ether_addr *mac,
+++			uint8_t *nexthop, char *ifname);
+++int get_primarymac_netlink(const char *mesh_iface, uint8_t *primarymac);
++ 
++ extern struct nla_policy batadv_netlink_policy[];
++ 
++diff --git a/ping.c b/ping.c
++index 05d6e97..1a0e2fe 100644
++--- a/ping.c
+++++ b/ping.c
++@@ -42,6 +42,7 @@
++ #include "packet.h"
++ #include "bat-hosts.h"
++ #include "debugfs.h"
+++#include "icmp_helper.h"
++ 
++ 
++ char is_aborted = 0;
++@@ -78,8 +79,7 @@ int ping(char *mesh_iface, int argc, char **argv)
++ 	struct ether_addr *dst_mac = NULL, *rr_mac = NULL;
++ 	struct bat_host *bat_host, *rr_host;
++ 	ssize_t read_len;
++-	fd_set read_socket;
++-	int ret = EXIT_FAILURE, ping_fd = -1, res, optchar, found_args = 1;
+++	int ret = EXIT_FAILURE, res, optchar, found_args = 1;
++ 	int loop_count = -1, loop_interval = 0, timeout = 1, rr = 0, i;
++ 	unsigned int seq_counter = 0, packets_out = 0, packets_in = 0, packets_loss;
++ 	char *dst_string, *mac_string, *rr_string;
++@@ -88,7 +88,6 @@ int ping(char *mesh_iface, int argc, char **argv)
++ 	uint8_t last_rr_cur = 0, last_rr[BATADV_RR_LEN][ETH_ALEN];
++ 	size_t packet_len;
++ 	char *debugfs_mnt;
++-	char icmp_socket[MAX_PATH+1];
++ 	int disable_translate_mac = 0;
++ 
++ 	while ((optchar = getopt(argc, argv, "hc:i:t:RT")) != -1) {
++@@ -163,17 +162,7 @@ int ping(char *mesh_iface, int argc, char **argv)
++ 		goto out;
++ 	}
++ 
++-	debugfs_make_path(SOCKET_PATH_FMT, mesh_iface, icmp_socket, sizeof(icmp_socket));
++-
++-	ping_fd = open(icmp_socket, O_RDWR);
++-
++-	if (ping_fd < 0) {
++-		fprintf(stderr, "Error - can't open a connection to the batman adv kernel module via the socket '%s': %s\n",
++-				icmp_socket, strerror(errno));
++-		printf("Check whether the module is loaded and active.\n");
++-		goto out;
++-	}
++-
+++	icmp_interfaces_init();
++ 	packet_len = sizeof(struct batadv_icmp_packet);
++ 
++ 	memset(&icmp_packet_out, 0, sizeof(icmp_packet_out));
++@@ -208,36 +197,32 @@ int ping(char *mesh_iface, int argc, char **argv)
++ 
++ 		icmp_packet_out.seqno = htons(++seq_counter);
++ 
++-		if (write(ping_fd, (char *)&icmp_packet_out, packet_len) < 0) {
++-			fprintf(stderr, "Error - can't write to batman adv kernel file '%s': %s\n", icmp_socket, strerror(errno));
+++		res = icmp_interface_write(mesh_iface,
+++					   (struct batadv_icmp_header *)&icmp_packet_out,
+++					   packet_len);
+++		if (res < 0) {
+++			fprintf(stderr, "Error - can't send icmp packet: %s\n", strerror(res));
++ 			goto sleep;
++ 		}
++ 
++ read_packet:
++ 		start_timer();
++ 
++-		FD_ZERO(&read_socket);
++-		FD_SET(ping_fd, &read_socket);
++-
++-		res = select(ping_fd + 1, &read_socket, NULL, NULL, &tv);
+++		read_len = icmp_interface_read((struct batadv_icmp_header *)&icmp_packet_in,
+++					       packet_len, &tv);
++ 
++ 		if (is_aborted)
++ 			break;
++ 
++ 		packets_out++;
++ 
++-		if (res == 0) {
+++		if (read_len == 0) {
++ 			printf("Reply from host %s timed out\n", dst_string);
++ 			goto sleep;
++ 		}
++ 
++-		if (res < 0)
++-			goto sleep;
++-
++-		read_len = read(ping_fd, (char *)&icmp_packet_in, packet_len);
++-
++ 		if (read_len < 0) {
++-			fprintf(stderr, "Error - can't read from batman adv kernel file '%s': %s\n", icmp_socket, strerror(errno));
+++			fprintf(stderr, "Error - can't receive icmp packets: %s\n", strerror(read_len));
++ 			goto sleep;
++ 		}
++ 
++@@ -353,8 +338,7 @@ sleep:
++ 		ret = EXIT_NOSUCCESS;
++ 
++ out:
+++	icmp_interfaces_clean();
++ 	bat_hosts_free();
++-	if (ping_fd >= 0)
++-		close(ping_fd);
++ 	return ret;
++ }
++diff --git a/traceroute.c b/traceroute.c
++index 2cd29d9..89e5ad9 100644
++--- a/traceroute.c
+++++ b/traceroute.c
++@@ -39,6 +39,7 @@
++ #include "packet.h"
++ #include "bat-hosts.h"
++ #include "debugfs.h"
+++#include "icmp_helper.h"
++ 
++ 
++ #define TTL_MAX 50
++@@ -60,14 +61,12 @@ int traceroute(char *mesh_iface, int argc, char **argv)
++ 	struct bat_host *bat_host;
++ 	struct ether_addr *dst_mac = NULL;
++ 	struct timeval tv;
++-	fd_set read_socket;
++ 	ssize_t read_len;
++ 	char *dst_string, *mac_string, *return_mac, dst_reached = 0;
++-	int ret = EXIT_FAILURE, res, trace_fd = -1, i;
+++	int ret = EXIT_FAILURE, res, i;
++ 	int found_args = 1, optchar, seq_counter = 0, read_opt = USE_BAT_HOSTS;
++ 	double time_delta[NUM_PACKETS];
++ 	char *debugfs_mnt;
++-	char icmp_socket[MAX_PATH+1];
++ 	int disable_translate_mac = 0;
++ 
++ 	while ((optchar = getopt(argc, argv, "hnT")) != -1) {
++@@ -122,16 +121,7 @@ int traceroute(char *mesh_iface, int argc, char **argv)
++ 		goto out;
++ 	}
++ 
++-	debugfs_make_path(SOCKET_PATH_FMT, mesh_iface, icmp_socket, sizeof(icmp_socket));
++-
++-	trace_fd = open(icmp_socket, O_RDWR);
++-
++-	if (trace_fd < 0) {
++-		fprintf(stderr, "Error - can't open a connection to the batman adv kernel module via the socket '%s': %s\n",
++-				icmp_socket, strerror(errno));
++-		fprintf(stderr, "Check whether the module is loaded and active.\n");
++-		goto out;
++-	}
+++	icmp_interfaces_init();
++ 
++ 	memset(&icmp_packet_out, 0, sizeof(icmp_packet_out));
++ 	memcpy(&icmp_packet_out.dst, dst_mac, ETH_ALEN);
++@@ -154,8 +144,11 @@ int traceroute(char *mesh_iface, int argc, char **argv)
++ 			icmp_packet_out.seqno = htons(++seq_counter);
++ 			time_delta[i] = 0.0;
++ 
++-			if (write(trace_fd, (char *)&icmp_packet_out, sizeof(icmp_packet_out)) < 0) {
++-				fprintf(stderr, "Error - can't write to batman adv kernel file '%s': %s\n", icmp_socket, strerror(errno));
+++			res = icmp_interface_write(mesh_iface,
+++					   (struct batadv_icmp_header *)&icmp_packet_out,
+++					   sizeof(icmp_packet_out));
+++			if (res < 0) {
+++				fprintf(stderr, "Error - can't send icmp packet: %s\n", strerror(res));
++ 				continue;
++ 			}
++ 
++@@ -165,21 +158,11 @@ read_packet:
++ 			tv.tv_sec = 2;
++ 			tv.tv_usec = 0;
++ 
++-			FD_ZERO(&read_socket);
++-			FD_SET(trace_fd, &read_socket);
++-
++-			res = select(trace_fd + 1, &read_socket, NULL, NULL, &tv);
++-
++-			if (res <= 0)
+++			read_len = icmp_interface_read((struct batadv_icmp_header *)&icmp_packet_in,
+++						       sizeof(icmp_packet_in), &tv);
+++			if (read_len <= 0)
++ 				continue;
++ 
++-			read_len = read(trace_fd, (char *)&icmp_packet_in, sizeof(icmp_packet_in));
++-
++-			if (read_len < 0) {
++-				fprintf(stderr, "Error - can't read from batman adv kernel file '%s': %s\n", icmp_socket, strerror(errno));
++-				continue;
++-			}
++-
++ 			if ((size_t)read_len < sizeof(icmp_packet_in)) {
++ 				printf("Warning - dropping received packet as it is smaller than expected (%zu): %zd\n",
++ 					sizeof(icmp_packet_in), read_len);
++@@ -241,8 +224,7 @@ read_packet:
++ 	ret = EXIT_SUCCESS;
++ 
++ out:
+++	icmp_interfaces_clean();
++ 	bat_hosts_free();
++-	if (trace_fd >= 0)
++-		close(trace_fd);
++ 	return ret;
++ }
+diff --git a/batctl/patches/0014-batctl-Fix-error-message-on-icmp_interface_write-fai.patch b/batctl/patches/0014-batctl-Fix-error-message-on-icmp_interface_write-fai.patch
+new file mode 100644
+index 0000000..f433af9
+--- /dev/null
++++ b/batctl/patches/0014-batctl-Fix-error-message-on-icmp_interface_write-fai.patch
+@@ -0,0 +1,22 @@
++From: Sven Eckelmann <sven@narfation.org>
++Date: Tue, 25 Oct 2016 07:42:01 +0200
++Subject: [PATCH] batctl: Fix error message on icmp_interface_write failure
++
++Signed-off-by: Sven Eckelmann <sven@narfation.org>
++---
++ ping.c | 2 +-
++ 1 file changed, 1 insertion(+), 1 deletion(-)
++
++diff --git a/ping.c b/ping.c
++index 1a0e2fe..0920f4b 100644
++--- a/ping.c
+++++ b/ping.c
++@@ -201,7 +201,7 @@ int ping(char *mesh_iface, int argc, char **argv)
++ 					   (struct batadv_icmp_header *)&icmp_packet_out,
++ 					   packet_len);
++ 		if (res < 0) {
++-			fprintf(stderr, "Error - can't send icmp packet: %s\n", strerror(res));
+++			fprintf(stderr, "Error - can't send icmp packet: %s\n", strerror(-res));
++ 			goto sleep;
++ 		}
++ 
+diff --git a/batctl/patches/0015-batctl-Fix-error-message-on-icmp_interface_read-fail.patch b/batctl/patches/0015-batctl-Fix-error-message-on-icmp_interface_read-fail.patch
+new file mode 100644
+index 0000000..a5c9b7a
+--- /dev/null
++++ b/batctl/patches/0015-batctl-Fix-error-message-on-icmp_interface_read-fail.patch
+@@ -0,0 +1,22 @@
++From: Sven Eckelmann <sven@narfation.org>
++Date: Tue, 25 Oct 2016 07:43:11 +0200
++Subject: [PATCH] batctl: Fix error message on icmp_interface_read failure
++
++Signed-off-by: Sven Eckelmann <sven@narfation.org>
++---
++ ping.c | 2 +-
++ 1 file changed, 1 insertion(+), 1 deletion(-)
++
++diff --git a/ping.c b/ping.c
++index 0920f4b..23af551 100644
++--- a/ping.c
+++++ b/ping.c
++@@ -222,7 +222,7 @@ read_packet:
++ 		}
++ 
++ 		if (read_len < 0) {
++-			fprintf(stderr, "Error - can't receive icmp packets: %s\n", strerror(read_len));
+++			fprintf(stderr, "Error - can't receive icmp packets: %s\n", strerror(-read_len));
++ 			goto sleep;
++ 		}
++ 
+diff --git a/batctl/patches/0016-batctl-Start-new-development-cycle.patch b/batctl/patches/0016-batctl-Start-new-development-cycle.patch
+new file mode 100644
+index 0000000..3a0f80e
+--- /dev/null
++++ b/batctl/patches/0016-batctl-Start-new-development-cycle.patch
+@@ -0,0 +1,22 @@
++From: Simon Wunderlich <sw@simonwunderlich.de>
++Date: Thu, 27 Oct 2016 21:21:05 +0200
++Subject: [PATCH] batctl: Start new development cycle
++
++Signed-off-by: Simon Wunderlich <sw@simonwunderlich.de>
++---
++ main.h | 2 +-
++ 1 file changed, 1 insertion(+), 1 deletion(-)
++
++diff --git a/main.h b/main.h
++index dbde6dd..d276ee3 100644
++--- a/main.h
+++++ b/main.h
++@@ -25,7 +25,7 @@
++ #include <stdint.h>
++ 
++ #ifndef SOURCE_VERSION
++-#define SOURCE_VERSION "2016.4"
+++#define SOURCE_VERSION "2016.5"
++ #endif
++ 
++ #define SOCKET_PATH_FMT "%s/batman_adv/%s/socket"
+diff --git a/batctl/patches/0017-batctl-Fix-netlink-header-includes-for-musl.patch b/batctl/patches/0017-batctl-Fix-netlink-header-includes-for-musl.patch
+new file mode 100644
+index 0000000..a519e64
+--- /dev/null
++++ b/batctl/patches/0017-batctl-Fix-netlink-header-includes-for-musl.patch
+@@ -0,0 +1,50 @@
++From: Sven Eckelmann <sven@narfation.org>
++Date: Sat, 3 Dec 2016 15:24:30 +0100
++Subject: [PATCH] batctl: Fix netlink header includes for musl
++
++musl and uClibc don't always include the required files to have external
++types defined in their headers.
++
++Signed-off-by: Sven Eckelmann <sven@narfation.org>
++---
++ icmp_helper.c | 1 +
++ icmp_helper.h | 1 -
++ interface.c   | 1 +
++ 3 files changed, 2 insertions(+), 1 deletion(-)
++
++diff --git a/icmp_helper.c b/icmp_helper.c
++index 87c6e15..bf48cea 100644
++--- a/icmp_helper.c
+++++ b/icmp_helper.c
++@@ -25,6 +25,7 @@
++ #include <errno.h>
++ #include <linux/filter.h>
++ #include <linux/if_packet.h>
+++#include <linux/rtnetlink.h>
++ #include <net/ethernet.h>
++ #include <netinet/ether.h>
++ #include <stdbool.h>
++diff --git a/icmp_helper.h b/icmp_helper.h
++index 37971da..cdaf554 100644
++--- a/icmp_helper.h
+++++ b/icmp_helper.h
++@@ -24,7 +24,6 @@
++ 
++ #include "main.h"
++ 
++-#include <linux/if_link.h>
++ #include <net/ethernet.h>
++ #include <net/if.h>
++ #include <netlink/netlink.h>
++diff --git a/interface.c b/interface.c
++index 9d5590d..7258475 100644
++--- a/interface.c
+++++ b/interface.c
++@@ -30,6 +30,7 @@
++ #include <dirent.h>
++ #include <net/if.h>
++ #include <linux/if_link.h>
+++#include <linux/rtnetlink.h>
++ #include <netlink/netlink.h>
++ #include <netlink/msg.h>
++ #include <netlink/attr.h>

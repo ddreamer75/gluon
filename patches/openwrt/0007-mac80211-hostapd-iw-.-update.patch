@@ -25294,7 +25294,7 @@ index ad82081..d17cbca 100644
  
  include $(INCLUDE_DIR)/package.mk
 diff --git a/package/network/utils/iw/patches/001-nl80211_h_sync.patch b/package/network/utils/iw/patches/001-nl80211_h_sync.patch
-index 7de2258..e5ea8f7 100644
+index 7de2258..e5ea8f7c 100644
 --- a/package/network/utils/iw/patches/001-nl80211_h_sync.patch
 +++ b/package/network/utils/iw/patches/001-nl80211_h_sync.patch
 @@ -8,7 +8,17 @@
