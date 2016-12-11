@@ -33,13 +33,18 @@ index 1e0c9d0..d0ab238 100644
  }
 diff --git a/batman-adv/patches/1001-batman-adv-introduce-no_rebroadcast-option.patch b/batman-adv/patches/1001-batman-adv-introduce-no_rebroadcast-option.patch
 new file mode 100644
-index 0000000..2f328d2
+index 0000000..2d274d1
 --- /dev/null
 +++ b/batman-adv/patches/1001-batman-adv-introduce-no_rebroadcast-option.patch
-@@ -0,0 +1,190 @@
-+From: Linus Lüssing <linus.luessing@web.de>
+@@ -0,0 +1,189 @@
++From eaeec9a5366d5e21fe07063ccede2edb7aa55e8e Mon Sep 17 00:00:00 2001
++Message-Id: <eaeec9a5366d5e21fe07063ccede2edb7aa55e8e.1481414736.git.mschiffer@universe-factory.net>
++From: =?UTF-8?q?Linus=20L=C3=BCssing?= <linus.luessing@web.de>
 +Date: Tue, 24 Sep 2013 04:36:27 +0200
-+Subject: [PATCH] batman-adv: introduce 'no_rebroadcast' option
++Subject: [PATCH 1/2] batman-adv: introduce 'no_rebroadcast' option
++MIME-Version: 1.0
++Content-Type: text/plain; charset=UTF-8
++Content-Transfer-Encoding: 8bit
 +
 +This patch introduces a new sysfs option named "no_rebroadcast" on
 +a per hard interface basis. It allows manually enabling a split-horizon
@@ -63,19 +68,20 @@ index 0000000..2f328d2
 +---
 + .../ABI/testing/sysfs-class-net-batman-adv         | 11 ++++
 + net/batman-adv/hard-interface.c                    |  2 +
-+ net/batman-adv/send.c                              |  5 ++
++ net/batman-adv/send.c                              |  4 ++
 + net/batman-adv/sysfs.c                             | 59 ++++++++++++++++++++++
 + net/batman-adv/types.h                             |  1 +
-+ 5 files changed, 78 insertions(+)
++ 5 files changed, 77 insertions(+)
 +
 +diff --git a/Documentation/ABI/testing/sysfs-class-net-batman-adv b/Documentation/ABI/testing/sysfs-class-net-batman-adv
-+index 8981068..ac04928 100644
++index 8981068..738c46d 100644
 +--- a/Documentation/ABI/testing/sysfs-class-net-batman-adv
 ++++ b/Documentation/ABI/testing/sysfs-class-net-batman-adv
-+@@ -20,6 +20,17 @@ Description:
-+                 displays the batman mesh interface this <iface>
-+                 currently is associated with.
-+ 
++@@ -28,3 +28,14 @@ description:
++                 when estimating the link throughput using this interface.
++                 If the value is set to 0 then batman-adv will try to
++                 estimate the throughput by itself.
+++
 ++What:           /sys/class/net/<iface>/batman-adv/no_rebroadcast
 ++Date:           Sep 2013
 ++Contact:        Linus Lüssing <linus.luessing@web.de>
@@ -86,15 +92,11 @@ index 0000000..2f328d2
 ++                and symmetric only, for instance point-to-point wifi longshots
 ++                or wired links. Using this option wrongly is going to
 ++                break your mesh network, use at your own risk!
-++
-+ What:           /sys/class/net/<iface>/batman-adv/throughput_override
-+ Date:           Feb 2014
-+ Contact:        Antonio Quartulli <a@unstable.cc>
 +diff --git a/net/batman-adv/hard-interface.c b/net/batman-adv/hard-interface.c
-+index e034afb..b485a88 100644
++index 08ce361..b0e2896 100644
 +--- a/net/batman-adv/hard-interface.c
 ++++ b/net/batman-adv/hard-interface.c
-+@@ -701,6 +701,8 @@ batadv_hardif_add_interface(struct net_device *net_dev)
++@@ -702,6 +702,8 @@ batadv_hardif_add_interface(struct net_device *net_dev)
 + 
 + 	batadv_v_hardif_init(hard_iface);
 + 
@@ -104,26 +106,20 @@ index 0000000..2f328d2
 + 	kref_get(&hard_iface->refcount);
 + 	list_add_tail_rcu(&hard_iface->list, &batadv_hardif_list);
 +diff --git a/net/batman-adv/send.c b/net/batman-adv/send.c
-+index 8d4e1f5..cb1b275 100644
++index 8d4e1f5..c8250f9 100644
 +--- a/net/batman-adv/send.c
 ++++ b/net/batman-adv/send.c
-+@@ -639,11 +639,16 @@ static void batadv_send_outstanding_bcast_packet(struct work_struct *work)
-+ 		if (!kref_get_unless_zero(&hard_iface->refcount))
++@@ -636,6 +636,10 @@ static void batadv_send_outstanding_bcast_packet(struct work_struct *work)
++ 		if (forw_packet->num_packets >= hard_iface->num_bcasts)
 + 			continue;
 + 
 ++		if (atomic_read(&hard_iface->no_rebroadcast) &&
 ++		    forw_packet->skb->dev == hard_iface->net_dev)
-++			goto put_hardif;
+++			continue;
 ++
-+ 		/* send a copy of the saved skb */
-+ 		skb1 = skb_clone(forw_packet->skb, GFP_ATOMIC);
-+ 		if (skb1)
-+ 			batadv_send_broadcast_skb(skb1, hard_iface);
++ 		if (!kref_get_unless_zero(&hard_iface->refcount))
++ 			continue;
 + 
-++put_hardif:
-+ 		batadv_hardif_put(hard_iface);
-+ 	}
-+ 	rcu_read_unlock();
 +diff --git a/net/batman-adv/sysfs.c b/net/batman-adv/sysfs.c
 +index 02d96f2..f91d09c 100644
 +--- a/net/batman-adv/sysfs.c
@@ -227,3 +223,6 @@ index 0000000..2f328d2
 + };
 + 
 + /**
++-- 
++2.10.2
++
