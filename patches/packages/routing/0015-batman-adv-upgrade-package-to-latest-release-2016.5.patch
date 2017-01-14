@@ -1,0 +1,433 @@
+From: Sven Eckelmann <sven@narfation.org>
+Date: Sat, 3 Dec 2016 14:52:30 +0100
+Subject: batman-adv: upgrade package to latest release 2016.5
+
+ * support latest kernels (3.2 - 4.10)
+ * change installation path back to $INSTALL_MOD_DIR/updates/net/batman-adv
+ * add simple (re)broadcast avoidance
+ * reduce multicast TT and TVLV update delays under B.A.T.M.A.N. V
+ * support B.A.T.M.A.N. V throughput detection when using VLANs on top of
+ * WiFi
+ * improve documentation of sysfs and debugfs files
+ * coding style cleanups and refactoring
+ * bugs squashed:
+   - detect missing primaryif during tp_send as error
+   - fix re-adding of previously removed interfaces via rtnetlink
+   - fix rare race conditions on interface removal
+   - handle allocation error when generating TT responses
+
+Signed-off-by: Sven Eckelmann <sven@narfation.org>
+
+Origin: backport, https://github.com/openwrt-routing/packages/commit/a80e8687720e430fd8f816e26eff4e07e6e244cf
+
+diff --git a/batman-adv/Makefile b/batman-adv/Makefile
+index 55f41fb..df64571 100644
+--- a/batman-adv/Makefile
++++ b/batman-adv/Makefile
+@@ -10,9 +10,9 @@ include $(TOPDIR)/rules.mk
+ 
+ PKG_NAME:=batman-adv
+ 
+-PKG_VERSION:=2016.4
+-PKG_RELEASE:=1
+-PKG_MD5SUM:=1ed28d02ad86050d1518023e354737b6
++PKG_VERSION:=2016.5
++PKG_RELEASE:=0
++PKG_MD5SUM:=6717a933a08dd2a01b00df30cb9f16a8
+ 
+ PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
+ PKG_SOURCE_URL:=https://downloads.open-mesh.org/batman/releases/batman-adv-$(PKG_VERSION)
+diff --git a/batman-adv/files/compat-hacks.h b/batman-adv/files/compat-hacks.h
+index 32903b5..af91f41 100644
+--- a/batman-adv/files/compat-hacks.h
++++ b/batman-adv/files/compat-hacks.h
+@@ -49,6 +49,11 @@ int ipv6_mc_check_mld(struct sk_buff *skb, struct sk_buff **skb_trimmed);
+ 
+ #define IFF_NO_QUEUE	0; dev->tx_queue_len = 0
+ 
++static inline bool hlist_fake(struct hlist_node *h)
++{
++	return h->pprev == &h->next;
++}
++
+ #endif /* < KERNEL_VERSION(4, 3, 0) */
+ 
+ #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 6, 0)
+@@ -187,3 +192,15 @@ static inline int batadv_nla_put_u64_64bit(struct sk_buff *skb, int attrtype,
+ 
+ #endif /* < KERNEL_VERSION(4, 7, 0) */
+ 
++
++#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)
++
++#include_next <linux/cache.h>
++
++/* hack for netlink.c which marked the family ops as ro */
++#ifdef __ro_after_init
++#undef __ro_after_init
++#endif
++#define __ro_after_init
++
++#endif /* < KERNEL_VERSION(4, 10, 0) */
+diff --git a/batman-adv/patches/0001-Add-compat-fallback-for-batadv_getlink_net.patch b/batman-adv/patches/0001-Add-compat-fallback-for-batadv_getlink_net.patch
+new file mode 100644
+index 0000000..c641828
+--- /dev/null
++++ b/batman-adv/patches/0001-Add-compat-fallback-for-batadv_getlink_net.patch
+@@ -0,0 +1,29 @@
++From: Sven Eckelmann <sven@narfation.org>
++Date: Fri, 23 Sep 2016 14:55:38 +0200
++Subject: [PATCH] Add compat fallback for batadv_getlink_net
++---
++ net/batman-adv/hard-interface.c | 4 ++++
++ 1 file changed, 4 insertions(+)
++
++diff --git a/net/batman-adv/hard-interface.c b/net/batman-adv/hard-interface.c
++index 61a431a9..6969f580 100644
++--- a/net/batman-adv/hard-interface.c
+++++ b/net/batman-adv/hard-interface.c
++@@ -95,6 +95,9 @@ out:
++ static struct net *batadv_getlink_net(const struct net_device *netdev,
++ 				      struct net *fallback_net)
++ {
+++#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 0, 0)
+++	return fallback_net;
+++#else
++ 	if (!netdev->rtnl_link_ops)
++ 		return fallback_net;
++ 
++@@ -102,6 +105,7 @@ static struct net *batadv_getlink_net(const struct net_device *netdev,
++ 		return fallback_net;
++ 
++ 	return netdev->rtnl_link_ops->get_link_net(netdev);
+++#endif
++ }
++ 
++ /**
+diff --git a/batman-adv/patches/0001-batman-adv-Install-module-in-INSTALL_MOD_DIR-updates.patch b/batman-adv/patches/0001-batman-adv-Install-module-in-INSTALL_MOD_DIR-updates.patch
+deleted file mode 100644
+index e5072e2..0000000
+--- a/batman-adv/patches/0001-batman-adv-Install-module-in-INSTALL_MOD_DIR-updates.patch
++++ /dev/null
+@@ -1,71 +0,0 @@
+-From: Sven Eckelmann <sven@narfation.org>
+-Date: Mon, 31 Oct 2016 08:27:19 +0100
+-Subject: [PATCH] batman-adv: Install module in $INSTALL_MOD_DIR/updates/net/batman-adv
+-
+-depmod may skip the batman-adv.ko module in the $INSTALL_MOD_DIR/update/
+-folder when it contains the word "build" as directory name.
+-
+-Avoid this extra directory "build" in the installation path by making the
+-obj-y dir relative to build/ in the source directory.
+-
+-Reported-by: Jean-Jacques Sarton <jj.sarton@t-online.de>
+-Fixes: 66ac14a09445 ("batman-adv: Introduce compat-patches support")
+-Signed-off-by: Sven Eckelmann <sven@narfation.org>
+-Tested-by: Martin Weinelt <martin@darmstadt.freifunk.net>
+----
+- Makefile | 16 +++++++++-------
+- 1 file changed, 9 insertions(+), 7 deletions(-)
+-
+-diff --git a/Makefile b/Makefile
+-index 7ef2569..b852a17 100644
+---- a/Makefile
+-+++ b/Makefile
+-@@ -46,6 +46,7 @@ MKDIR := mkdir -p
+- PATCH_FLAGS = --batch --fuzz=0 --forward --strip=1 --unified --version-control=never -g0 --remove-empty-files --no-backup-if-mismatch --reject-file=-
+- PATCH := patch $(PATCH_FLAGS) -i
+- CP := cp -fpR
+-+LN := ln -sf
+- 
+- SOURCE = $(wildcard net/batman-adv/*.[ch]) net/batman-adv/Makefile
+- SOURCE_BUILD = $(wildcard $(BUILD_DIR)/net/batman-adv/*.[ch]) $(BUILD_DIR)/net/batman-adv/Makefile
+-@@ -55,25 +56,25 @@ REVISION= $(shell	if [ -d "$(PWD)/.git" ]; then \
+- 				echo $$(git --git-dir="$(PWD)/.git" describe --always --dirty --match "v*" |sed 's/^v//' 2> /dev/null || echo "[unknown]"); \
+- 			fi)
+- NOSTDINC_FLAGS += \
+--	-I$(PWD)/compat-include/ \
+--	-I$(PWD)/include/ \
+--	-include $(PWD)/compat.h \
+-+	-I$(PWD)/../compat-include/ \
+-+	-I$(PWD)/../include/ \
+-+	-include $(PWD)/../compat.h \
+- 	$(CFLAGS)
+- 
+- ifneq ($(REVISION),)
+- NOSTDINC_FLAGS += -DBATADV_SOURCE_VERSION=\"$(REVISION)\"
+- endif
+- 
+--include $(PWD)/compat-sources/Makefile
+-+-include $(PWD)/../compat-sources/Makefile
+- 
+--obj-y += build/net/batman-adv/
+-+obj-y += net/batman-adv/
+- 
+- export batman-adv-y
+- 
+- 
+- BUILD_FLAGS := \
+--	M=$(PWD) \
+--	PWD=$(PWD) \
+-+	M=$(BUILD_DIR) \
+-+	PWD=$(BUILD_DIR) \
+- 	REVISION=$(REVISION) \
+- 	CONFIG_BATMAN_ADV=m \
+- 	CONFIG_BATMAN_ADV_DEBUG=$(CONFIG_BATMAN_ADV_DEBUG) \
+-@@ -101,6 +102,7 @@ config:
+- 
+- $(SOURCE_STAMP): $(SOURCE) compat-patches/* compat-patches/replacements.sh
+- 	$(MKDIR) $(BUILD_DIR)/net/batman-adv/
+-+	@$(LN) ../Makefile $(BUILD_DIR)/Makefile
+- 	@$(RM) $(SOURCE_BUILD)
+- 	@$(CP) $(SOURCE) $(BUILD_DIR)/net/batman-adv/
+- 	@set -e; \
+diff --git a/batman-adv/patches/0002-batman-adv-Revert-fix-splat-on-disabling-an-interfac.patch b/batman-adv/patches/0002-batman-adv-Revert-fix-splat-on-disabling-an-interfac.patch
+deleted file mode 100644
+index 46d2779..0000000
+--- a/batman-adv/patches/0002-batman-adv-Revert-fix-splat-on-disabling-an-interfac.patch
++++ /dev/null
+@@ -1,32 +0,0 @@
+-From: Sven Eckelmann <sven@narfation.org>
+-Date: Wed, 2 Nov 2016 18:14:43 +0100
+-Subject: [PATCH] batman-adv: Revert "fix splat on disabling an interface"
+-
+-The commit bac7733d06fa ("batman-adv: fix splat on disabling an interface")
+-fixed a warning but at the same time broke the rtnl function add_slave for
+-devices which were temporarily removed.
+-
+-batadv_softif_slave_add requires soft_iface of and hard_iface to be NULL
+-before it is allowed to be enslaved. But this resetting of soft_iface to
+-NULL in batadv_hardif_disable_interface was removed with the aforementioned
+-commit.
+-
+-Reported-by: Julian Labus <julian@freifunk-rtk.de>
+-Signed-off-by: Sven Eckelmann <sven@narfation.org>
+-Acked-by: Linus Lüssing <linus.luessing@c0d3.blue>
+----
+- net/batman-adv/hard-interface.c | 1 +
+- 1 file changed, 1 insertion(+)
+-
+-diff --git a/net/batman-adv/hard-interface.c b/net/batman-adv/hard-interface.c
+-index e034afb..08ce361 100644
+---- a/net/batman-adv/hard-interface.c
+-+++ b/net/batman-adv/hard-interface.c
+-@@ -652,6 +652,7 @@ void batadv_hardif_disable_interface(struct batadv_hard_iface *hard_iface,
+- 			batadv_softif_destroy_sysfs(hard_iface->soft_iface);
+- 	}
+- 
+-+	hard_iface->soft_iface = NULL;
+- 	batadv_hardif_put(hard_iface);
+- 
+- out:
+diff --git a/batman-adv/patches/0003-batman-adv-Detect-missing-primaryif-during-tp_send-a.patch b/batman-adv/patches/0003-batman-adv-Detect-missing-primaryif-during-tp_send-a.patch
+deleted file mode 100644
+index 37c676d..0000000
+--- a/batman-adv/patches/0003-batman-adv-Detect-missing-primaryif-during-tp_send-a.patch
++++ /dev/null
+@@ -1,28 +0,0 @@
+-From: Sven Eckelmann <sven@narfation.org>
+-Date: Sat, 29 Oct 2016 09:18:43 +0200
+-Subject: [PATCH] batman-adv: Detect missing primaryif during tp_send as error
+-
+-The throughput meter detects different situations as problems for the
+-current test. It stops the test after these and reports it to userspace.
+-This also has to be done when the primary interface disappeared during the
+-test.
+-
+-Fixes: 98d7a766b645 ("batman-adv: throughput meter implementation")
+-Reported-by: Joe Perches <joe@perches.com>
+-Signed-off-by: Sven Eckelmann <sven@narfation.org>
+----
+- net/batman-adv/tp_meter.c | 1 +
+- 1 file changed, 1 insertion(+)
+-
+-diff --git a/net/batman-adv/tp_meter.c b/net/batman-adv/tp_meter.c
+-index 2333777..8af1611 100644
+---- a/net/batman-adv/tp_meter.c
+-+++ b/net/batman-adv/tp_meter.c
+-@@ -837,6 +837,7 @@ static int batadv_tp_send(void *arg)
+- 	primary_if = batadv_primary_if_get_selected(bat_priv);
+- 	if (unlikely(!primary_if)) {
+- 		err = BATADV_TP_REASON_DST_UNREACHABLE;
+-+		tp_vars->reason = err;
+- 		goto out;
+- 	}
+- 
+diff --git a/batman-adv/patches/0005-batman-adv-Check-for-alloc-errors-when-preparing-TT-.patch b/batman-adv/patches/0005-batman-adv-Check-for-alloc-errors-when-preparing-TT-.patch
+deleted file mode 100644
+index bf6478c..0000000
+--- a/batman-adv/patches/0005-batman-adv-Check-for-alloc-errors-when-preparing-TT-.patch
++++ /dev/null
+@@ -1,39 +0,0 @@
+-From: Sven Eckelmann <sven@narfation.org>
+-Date: Wed, 30 Nov 2016 21:47:09 +0100
+-Subject: [PATCH] batman-adv: Check for alloc errors when preparing TT local data
+-
+-batadv_tt_prepare_tvlv_local_data can fail to allocate the memory for the
+-new TVLV block. The caller is informed about this problem with the returned
+-length of 0. Not checking this value results in an invalid memory access
+-when either tt_data or tt_change is accessed.
+-
+-Reported-by: Dan Carpenter <dan.carpenter@oracle.com>
+-Fixes: 21a57f6e7a3b ("batman-adv: make the TT CRC logic VLAN specific")
+-Signed-off-by: Sven Eckelmann <sven@narfation.org>
+-Signed-off-by: Simon Wunderlich <sw@simonwunderlich.de>
+----
+- net/batman-adv/translation-table.c | 4 ++--
+- 1 file changed, 2 insertions(+), 2 deletions(-)
+-
+-diff --git a/net/batman-adv/translation-table.c b/net/batman-adv/translation-table.c
+-index 7f66309..0dc85eb 100644
+---- a/net/batman-adv/translation-table.c
+-+++ b/net/batman-adv/translation-table.c
+-@@ -3282,7 +3282,7 @@ static bool batadv_send_my_tt_response(struct batadv_priv *bat_priv,
+- 							     &tvlv_tt_data,
+- 							     &tt_change,
+- 							     &tt_len);
+--		if (!tt_len)
+-+		if (!tt_len || !tvlv_len)
+- 			goto unlock;
+- 
+- 		/* Copy the last orig_node's OGM buffer */
+-@@ -3300,7 +3300,7 @@ static bool batadv_send_my_tt_response(struct batadv_priv *bat_priv,
+- 							     &tvlv_tt_data,
+- 							     &tt_change,
+- 							     &tt_len);
+--		if (!tt_len)
+-+		if (!tt_len || !tvlv_len)
+- 			goto out;
+- 
+- 		/* fill the rest of the tvlv with the real TT entries */
+diff --git a/batman-adv/patches/1001-batman-adv-introduce-no_rebroadcast-option.patch b/batman-adv/patches/1001-batman-adv-introduce-no_rebroadcast-option.patch
+index 2d274d1..bb580b6 100644
+--- a/batman-adv/patches/1001-batman-adv-introduce-no_rebroadcast-option.patch
++++ b/batman-adv/patches/1001-batman-adv-introduce-no_rebroadcast-option.patch
+@@ -57,7 +57,7 @@ diff --git a/net/batman-adv/hard-interface.c b/net/batman-adv/hard-interface.c
+ index 08ce361..b0e2896 100644
+ --- a/net/batman-adv/hard-interface.c
+ +++ b/net/batman-adv/hard-interface.c
+-@@ -702,6 +702,8 @@ batadv_hardif_add_interface(struct net_device *net_dev)
++@@ -902,6 +902,8 @@ batadv_hardif_add_interface(struct net_d
+  
+  	batadv_v_hardif_init(hard_iface);
+  
+@@ -70,9 +70,9 @@ diff --git a/net/batman-adv/send.c b/net/batman-adv/send.c
+ index 8d4e1f5..c8250f9 100644
+ --- a/net/batman-adv/send.c
+ +++ b/net/batman-adv/send.c
+-@@ -636,6 +636,10 @@ static void batadv_send_outstanding_bcast_packet(struct work_struct *work)
+- 		if (forw_packet->num_packets >= hard_iface->num_bcasts)
+- 			continue;
++@@ -870,6 +870,10 @@ static void batadv_send_outstanding_bcas
++ 		if (neigh_node)
++ 			batadv_hardif_neigh_put(neigh_node);
+  
+ +		if (atomic_read(&hard_iface->no_rebroadcast) &&
+ +		    forw_packet->skb->dev == hard_iface->net_dev)
+@@ -85,7 +85,7 @@ diff --git a/net/batman-adv/sysfs.c b/net/batman-adv/sysfs.c
+ index 02d96f2..f91d09c 100644
+ --- a/net/batman-adv/sysfs.c
+ +++ b/net/batman-adv/sysfs.c
+-@@ -136,6 +136,17 @@ struct batadv_attribute batadv_attr_vlan_##_name = {	\
++@@ -135,6 +135,17 @@ struct batadv_attribute batadv_attr_vlan
+  	.store  = _store,				\
+  }
+  
+@@ -103,7 +103,7 @@ index 02d96f2..f91d09c 100644
+  /* Use this, if you have customized show and store functions */
+  #define BATADV_ATTR(_name, _mode, _show, _store)	\
+  struct batadv_attribute batadv_attr_##_name = {		\
+-@@ -295,6 +306,52 @@ ssize_t batadv_show_##_name(struct kobject *kobj,			\
++@@ -294,6 +305,52 @@ ssize_t batadv_show_##_name(struct kobje
+  	static BATADV_ATTR(_name, _mode, batadv_show_##_name,		\
+  			   batadv_store_##_name)
+  
+@@ -156,15 +156,15 @@ index 02d96f2..f91d09c 100644
+  static int batadv_store_bool_attr(char *buff, size_t count,
+  				  struct net_device *net_dev,
+  				  const char *attr_name, atomic_t *attr,
+-@@ -1119,6 +1176,7 @@ static ssize_t batadv_show_throughput_override(struct kobject *kobj,
+- static BATADV_ATTR(mesh_iface, S_IRUGO | S_IWUSR, batadv_show_mesh_iface,
++@@ -1113,6 +1170,7 @@ static ssize_t batadv_show_throughput_ov
++ static BATADV_ATTR(mesh_iface, 0644, batadv_show_mesh_iface,
+  		   batadv_store_mesh_iface);
+- static BATADV_ATTR(iface_status, S_IRUGO, batadv_show_iface_status, NULL);
+-+BATADV_ATTR_HIF_BOOL(no_rebroadcast, S_IRUGO | S_IWUSR, NULL);
++ static BATADV_ATTR(iface_status, 0444, batadv_show_iface_status, NULL);
+++BATADV_ATTR_HIF_BOOL(no_rebroadcast, 0644, NULL);
+  #ifdef CONFIG_BATMAN_ADV_BATMAN_V
+- BATADV_ATTR_HIF_UINT(elp_interval, bat_v.elp_interval, S_IRUGO | S_IWUSR,
++ BATADV_ATTR_HIF_UINT(elp_interval, bat_v.elp_interval, 0644,
+  		     2 * BATADV_JITTER, INT_MAX, NULL);
+-@@ -1130,6 +1188,7 @@ static BATADV_ATTR(throughput_override, S_IRUGO | S_IWUSR,
++@@ -1123,6 +1181,7 @@ static BATADV_ATTR(throughput_override,
+  static struct batadv_attribute *batadv_batman_attrs[] = {
+  	&batadv_attr_mesh_iface,
+  	&batadv_attr_iface_status,
+@@ -176,7 +176,7 @@ diff --git a/net/batman-adv/types.h b/net/batman-adv/types.h
+ index b3dd1a3..9ee810d 100644
+ --- a/net/batman-adv/types.h
+ +++ b/net/batman-adv/types.h
+-@@ -156,6 +156,7 @@ struct batadv_hard_iface {
++@@ -173,6 +173,7 @@ struct batadv_hard_iface {
+  	struct hlist_head neigh_list;
+  	/* neigh_list_lock protects: neigh_list */
+  	spinlock_t neigh_list_lock;
+@@ -186,4 +186,3 @@ index b3dd1a3..9ee810d 100644
+  /**
+ -- 
+ 2.10.2
+-
+diff --git a/batman-adv/patches/1002-batman-adv-decrease-maximum-fragment-size.patch b/batman-adv/patches/1002-batman-adv-decrease-maximum-fragment-size.patch
+index 1a0b561..de0141f 100644
+--- a/batman-adv/patches/1002-batman-adv-decrease-maximum-fragment-size.patch
++++ b/batman-adv/patches/1002-batman-adv-decrease-maximum-fragment-size.patch
+@@ -14,7 +14,7 @@ diff --git a/net/batman-adv/main.h b/net/batman-adv/main.h
+ index 09af21e..23ebb8e 100644
+ --- a/net/batman-adv/main.h
+ +++ b/net/batman-adv/main.h
+-@@ -167,7 +167,7 @@ enum batadv_uev_type {
++@@ -168,7 +168,7 @@ enum batadv_uev_type {
+  /* Maximum number of fragments for one packet */
+  #define BATADV_FRAG_MAX_FRAGMENTS 16
+  /* Maxumim size of each fragment */
+@@ -25,4 +25,3 @@ index 09af21e..23ebb8e 100644
+  
+ -- 
+ 2.10.2
+-
+diff --git a/batman-adv/patches/1003-Add-compat-fallback-for-batadv_getlink_net.patch b/batman-adv/patches/1003-Add-compat-fallback-for-batadv_getlink_net.patch
+deleted file mode 100644
+index 23592e8..0000000
+--- a/batman-adv/patches/1003-Add-compat-fallback-for-batadv_getlink_net.patch
++++ /dev/null
+@@ -1,29 +0,0 @@
+-From: Sven Eckelmann <sven@narfation.org>
+-Date: Fri, 23 Sep 2016 14:55:38 +0200
+-Subject: [PATCH] Add compat fallback for batadv_getlink_net
+----
+- net/batman-adv/hard-interface.c | 4 ++++
+- 1 file changed, 4 insertions(+)
+-
+-diff --git a/net/batman-adv/hard-interface.c b/net/batman-adv/hard-interface.c
+-index 08ce361..e6ea2f9 100644
+---- a/net/batman-adv/hard-interface.c
+-+++ b/net/batman-adv/hard-interface.c
+-@@ -95,6 +95,9 @@ out:
+- static const struct net *batadv_getlink_net(const struct net_device *netdev,
+- 					    const struct net *fallback_net)
+- {
+-+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 0, 0)
+-+	return fallback_net;
+-+#else
+- 	if (!netdev->rtnl_link_ops)
+- 		return fallback_net;
+- 
+-@@ -102,6 +105,7 @@ static const struct net *batadv_getlink_net(const struct net_device *netdev,
+- 		return fallback_net;
+- 
+- 	return netdev->rtnl_link_ops->get_link_net(netdev);
+-+#endif
+- }
+- 
+- /**
