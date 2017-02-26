@@ -1,0 +1,151 @@
+From: Sven Eckelmann <sven@narfation.org>
+Date: Sun, 26 Feb 2017 15:11:20 +0100
+Subject: batman-adv: add patches from 2016.5-maint 2017-02-21
+
+ * batman-adv: Fix double free during fragment merge error
+ * batman-adv: Fix transmission of final, 16th fragment
+
+Signed-off-by: Sven Eckelmann <sven@narfation.org>
+
+Forwarded: no
+
+diff --git a/batman-adv/Makefile b/batman-adv/Makefile
+index a2eb70272e5b6290f67696c6d831238bc9f066d3..d3e916e959a7fb46e9f62c2a8d725895f240c58d 100644
+--- a/batman-adv/Makefile
++++ b/batman-adv/Makefile
+@@ -11,7 +11,7 @@ include $(TOPDIR)/rules.mk
+ PKG_NAME:=batman-adv
+ 
+ PKG_VERSION:=2016.5
+-PKG_RELEASE:=3
++PKG_RELEASE:=4
+ PKG_MD5SUM:=6717a933a08dd2a01b00df30cb9f16a8
+ PKG_HASH:=d0a0fc90c4f410b57d043215e253bb0b855efa5edbe165d87c17bfdcfafd0db7
+ 
+diff --git a/batman-adv/patches/0003-batman-adv-Fix-double-free-during-fragment-merge-err.patch b/batman-adv/patches/0003-batman-adv-Fix-double-free-during-fragment-merge-err.patch
+new file mode 100644
+index 0000000000000000000000000000000000000000..f4baf465abbfda61c6d50c8d94bf3ba3306c6338
+--- /dev/null
++++ b/batman-adv/patches/0003-batman-adv-Fix-double-free-during-fragment-merge-err.patch
+@@ -0,0 +1,61 @@
++From: Sven Eckelmann <sven@narfation.org>
++Date: Sun, 12 Feb 2017 11:26:33 +0100
++Subject: [PATCH] batman-adv: Fix double free during fragment merge error
++
++The function batadv_frag_skb_buffer was supposed not to consume the skbuff
++on errors. This was followed in the helper function
++batadv_frag_insert_packet when the skb would potentially be inserted in the
++fragment queue. But it could happen that the next helper function
++batadv_frag_merge_packets would try to merge the fragments and fail. This
++results in a kfree_skb of all the enqueued fragments (including the just
++inserted one). batadv_recv_frag_packet would detect the error in
++batadv_frag_skb_buffer and try to free the skb again.
++
++The behavior of batadv_frag_skb_buffer (and its helper
++batadv_frag_insert_packet) must therefore be changed to always consume the
++skbuff to have a common behavior and avoid the double kfree_skb.
++
++Fixes: 9b3eab61754d ("batman-adv: Receive fragmented packets and merge")
++Signed-off-by: Sven Eckelmann <sven@narfation.org>
++
++Origin: upstream, https://git.open-mesh.org/batman-adv.git/commit/e3bab02816097f860545d9ce9ae0808c69d7c92f
++---
++ net/batman-adv/fragmentation.c | 8 +++++---
++ 1 file changed, 5 insertions(+), 3 deletions(-)
++
++diff --git a/net/batman-adv/fragmentation.c b/net/batman-adv/fragmentation.c
++index 0854ebd8..31e97e9a 100644
++--- a/net/batman-adv/fragmentation.c
+++++ b/net/batman-adv/fragmentation.c
++@@ -239,8 +239,10 @@ err_unlock:
++ 	spin_unlock_bh(&chain->lock);
++ 
++ err:
++-	if (!ret)
+++	if (!ret) {
++ 		kfree(frag_entry_new);
+++		kfree_skb(skb);
+++	}
++ 
++ 	return ret;
++ }
++@@ -313,7 +315,7 @@ free:
++  *
++  * There are three possible outcomes: 1) Packet is merged: Return true and
++  * set *skb to merged packet; 2) Packet is buffered: Return true and set *skb
++- * to NULL; 3) Error: Return false and leave skb as is.
+++ * to NULL; 3) Error: Return false and free skb.
++  *
++  * Return: true when packet is merged or buffered, false when skb is not not
++  * used.
++@@ -338,9 +340,9 @@ bool batadv_frag_skb_buffer(struct sk_buff **skb,
++ 		goto out_err;
++ 
++ out:
++-	*skb = skb_out;
++ 	ret = true;
++ out_err:
+++	*skb = skb_out;
++ 	return ret;
++ }
++ 
+diff --git a/batman-adv/patches/0004-batman-adv-Fix-transmission-of-final-16th-fragment.patch b/batman-adv/patches/0004-batman-adv-Fix-transmission-of-final-16th-fragment.patch
+new file mode 100644
+index 0000000000000000000000000000000000000000..6dec0f61cb9f13c9dfba2f449e84e8fcaf0a0f03
+--- /dev/null
++++ b/batman-adv/patches/0004-batman-adv-Fix-transmission-of-final-16th-fragment.patch
+@@ -0,0 +1,54 @@
++From: Linus Lüssing <linus.luessing@c0d3.blue>
++Date: Mon, 13 Feb 2017 20:44:31 +0100
++Subject: [PATCH] batman-adv: Fix transmission of final, 16th fragment
++
++Trying to split and transmit a unicast packet in 16 parts will fail for
++the final fragment: After having sent the 15th one with a frag_packet.no
++index of 14, we will increase the the index to 15 - and return with an
++error code immediately, even though one more fragment is due for
++transmission and allowed.
++
++Fixing this issue by moving the check before incrementing the index.
++
++While at it, adding an unlikely(), because the check is actually more of
++an assertion.
++
++Fixes: db56e4ecf5c2 ("batman-adv: Fragment and send skbs larger than mtu")
++Signed-off-by: Linus Lüssing <linus.luessing@c0d3.blue>
++Signed-off-by: Sven Eckelmann <sven@narfation.org>
++
++Origin: upstream, https://git.open-mesh.org/batman-adv.git/commit/464eff3b1768ff190466a453a57ac140ea5cb756
++---
++ net/batman-adv/fragmentation.c | 12 ++++++------
++ 1 file changed, 6 insertions(+), 6 deletions(-)
++
++diff --git a/net/batman-adv/fragmentation.c b/net/batman-adv/fragmentation.c
++index 31e97e9a..11149e5b 100644
++--- a/net/batman-adv/fragmentation.c
+++++ b/net/batman-adv/fragmentation.c
++@@ -501,6 +501,12 @@ int batadv_frag_send_packet(struct sk_buff *skb,
++ 
++ 	/* Eat and send fragments from the tail of skb */
++ 	while (skb->len > max_fragment_size) {
+++		/* The initial check in this function should cover this case */
+++		if (unlikely(frag_header.no == BATADV_FRAG_MAX_FRAGMENTS - 1)) {
+++			ret = -EINVAL;
+++			goto put_primary_if;
+++		}
+++
++ 		skb_fragment = batadv_frag_create(skb, &frag_header, mtu);
++ 		if (!skb_fragment) {
++ 			ret = -ENOMEM;
++@@ -517,12 +523,6 @@ int batadv_frag_send_packet(struct sk_buff *skb,
++ 		}
++ 
++ 		frag_header.no++;
++-
++-		/* The initial check in this function should cover this case */
++-		if (frag_header.no == BATADV_FRAG_MAX_FRAGMENTS - 1) {
++-			ret = -EINVAL;
++-			goto put_primary_if;
++-		}
++ 	}
++ 
++ 	/* Make room for the fragment header. */
