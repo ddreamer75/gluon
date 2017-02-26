@@ -1,0 +1,50 @@
+From: Sven Eckelmann <sven.eckelmann@open-mesh.com>
+Date: Mon, 30 Jan 2017 14:52:25 +0100
+Subject: batman-adv: Remove non-existing setting "vis_mode"
+
+There is no vis_mode in the batman-adv kernel module since batman-adv
+2014.0.0. So don't expose such a setting in uci.
+
+Signed-off-by: Sven Eckelmann <sven.eckelmann@open-mesh.com>
+
+Origin: upstream, https://github.com/openwrt-routing/packages/commit/6c1a1a066
+
+diff --git a/batman-adv/files/etc/config/batman-adv b/batman-adv/files/etc/config/batman-adv
+index f38855ebac5873c0f1243f33e37cfc979df3da87..97be6223524e912c4d98c98debe702e56b0c500b 100644
+--- a/batman-adv/files/etc/config/batman-adv
++++ b/batman-adv/files/etc/config/batman-adv
+@@ -9,7 +9,6 @@ config 'mesh' 'bat0'
+ 	option 'gw_sel_class'
+ 	option 'log_level'
+ 	option 'orig_interval'
+-	option 'vis_mode'
+ 	option 'bridge_loop_avoidance'
+ 	option 'distributed_arp_table'
+ 	option 'multicast_mode'
+diff --git a/batman-adv/files/lib/batman-adv/config.sh b/batman-adv/files/lib/batman-adv/config.sh
+index e46628ce64bfcd9f8271bff8261f775b2a73f4a7..3a746a3c0e280b9a01ae67ea27bde65619b77ebc 100644
+--- a/batman-adv/files/lib/batman-adv/config.sh
++++ b/batman-adv/files/lib/batman-adv/config.sh
+@@ -13,7 +13,7 @@ bat_config()
+ 	local mesh="$1"
+ 	local aggregated_ogms ap_isolation bonding bridge_loop_avoidance distributed_arp_table fragmentation
+ 	local gw_bandwidth gw_mode gw_sel_class isolation_mark hop_penalty multicast_mode network_coding log_level
+-	local orig_interval vis_mode
++	local orig_interval
+ 
+ 	config_get aggregated_ogms "$mesh" aggregated_ogms
+ 	config_get ap_isolation "$mesh" ap_isolation
+@@ -30,7 +30,6 @@ bat_config()
+ 	config_get network_coding "$mesh" network_coding
+ 	config_get log_level "$mesh" log_level
+ 	config_get orig_interval "$mesh" orig_interval
+-	config_get vis_mode "$mesh" vis_mode
+ 
+ 	[ ! -f "/sys/class/net/$mesh/mesh/orig_interval" ] && echo "batman-adv mesh $mesh does not exist - check your interface configuration" && return 1
+ 
+@@ -49,5 +48,4 @@ bat_config()
+ 	[ -n "$network_coding" ] && echo $network_coding > /sys/class/net/$mesh/mesh/network_coding 2>&-
+ 	[ -n "$log_level" ] && echo $log_level > /sys/class/net/$mesh/mesh/log_level 2>&-
+ 	[ -n "$orig_interval" ] && echo $orig_interval > /sys/class/net/$mesh/mesh/orig_interval
+-	[ -n "$vis_mode" ] && echo $vis_mode > /sys/class/net/$mesh/mesh/vis_mode
+ }

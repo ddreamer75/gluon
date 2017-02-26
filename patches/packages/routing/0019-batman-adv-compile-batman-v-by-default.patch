@@ -1,0 +1,18 @@
+From: Marek Lindner <mareklindner@neomailbox.ch>
+Date: Sun, 29 Jan 2017 19:46:17 +0800
+Subject: batman-adv: compile batman v by default
+
+Signed-off-by: Marek Lindner <mareklindner@neomailbox.ch>
+
+Origin: upstream, https://github.com/openwrt-routing/packages/commit/1f2e4d7d03fc3d9e79c28581419911395bcde404
+
+diff --git a/batman-adv/Config.in b/batman-adv/Config.in
+index 8c75f318e9001d7853145232060057d664931aae..1b2399fc0ba6fecb8b9dd7c1abf3a0d791ae4621 100644
+--- a/batman-adv/Config.in
++++ b/batman-adv/Config.in
+@@ -32,4 +32,4 @@ config KMOD_BATMAN_ADV_NC
+ config KMOD_BATMAN_ADV_BATMAN_V
+ 	bool "enable batman v routing algorithm"
+ 	depends on PACKAGE_kmod-batman-adv
+-	default n
++	default y

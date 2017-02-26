@@ -1,0 +1,40 @@
+From: Sven Eckelmann <sven.eckelmann@open-mesh.com>
+Date: Mon, 30 Jan 2017 14:46:03 +0100
+Subject: batman-adv: Fix "aggregated_ogms" setting
+
+The new setting for aggregated_ogms was read from the correct config key.
+But the setting was applied to the wrong file. Also the value to set was
+not read from the correct variable.
+
+Reported-by: Edward Beech <initialed85@gmail.com>
+Fixes: 2d654c0af194 ("batman-adv: upgrade package to latest release 2012.0.0")
+Signed-off-by: Sven Eckelmann <sven.eckelmann@open-mesh.com>
+
+Origin: upstream, https://github.com/openwrt-routing/packages/commit/6c1a1a066670d2ac61a6d1d30906c2ed4d3f280c
+
+diff --git a/batman-adv/Makefile b/batman-adv/Makefile
+index c625e9bec61a29832ae8d565afde756aa47267b0..a2eb70272e5b6290f67696c6d831238bc9f066d3 100644
+--- a/batman-adv/Makefile
++++ b/batman-adv/Makefile
+@@ -11,7 +11,7 @@ include $(TOPDIR)/rules.mk
+ PKG_NAME:=batman-adv
+ 
+ PKG_VERSION:=2016.5
+-PKG_RELEASE:=2
++PKG_RELEASE:=3
+ PKG_MD5SUM:=6717a933a08dd2a01b00df30cb9f16a8
+ PKG_HASH:=d0a0fc90c4f410b57d043215e253bb0b855efa5edbe165d87c17bfdcfafd0db7
+ 
+diff --git a/batman-adv/files/lib/batman-adv/config.sh b/batman-adv/files/lib/batman-adv/config.sh
+index 1429a43a9053f3f6c96a5747144b1c31265b3917..e46628ce64bfcd9f8271bff8261f775b2a73f4a7 100644
+--- a/batman-adv/files/lib/batman-adv/config.sh
++++ b/batman-adv/files/lib/batman-adv/config.sh
+@@ -34,7 +34,7 @@ bat_config()
+ 
+ 	[ ! -f "/sys/class/net/$mesh/mesh/orig_interval" ] && echo "batman-adv mesh $mesh does not exist - check your interface configuration" && return 1
+ 
+-	[ -n "$aggregate_ogms" ] && echo $aggregate_ogms > /sys/class/net/$mesh/mesh/aggregate_ogms
++	[ -n "$aggregated_ogms" ] && echo $aggregated_ogms > /sys/class/net/$mesh/mesh/aggregated_ogms
+ 	[ -n "$ap_isolation" ] && echo $ap_isolation > /sys/class/net/$mesh/mesh/ap_isolation
+ 	[ -n "$bonding" ] && echo $bonding > /sys/class/net/$mesh/mesh/bonding
+ 	[ -n "$bridge_loop_avoidance" ] && echo $bridge_loop_avoidance > /sys/class/net/$mesh/mesh/bridge_loop_avoidance 2>&-

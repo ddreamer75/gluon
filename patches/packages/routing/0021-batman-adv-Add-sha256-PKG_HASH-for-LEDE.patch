@@ -1,0 +1,20 @@
+From: Sven Eckelmann <sven.eckelmann@open-mesh.com>
+Date: Wed, 25 Jan 2017 10:03:30 +0100
+Subject: batman-adv: Add sha256 PKG_HASH for LEDE
+
+Signed-off-by: Sven Eckelmann <sven.eckelmann@open-mesh.com>
+
+Origin: upstream, https://github.com/openwrt-routing/packages/commit/438114cc26e1ea24d20adab2b0afb9157de4e03f
+
+diff --git a/batman-adv/Makefile b/batman-adv/Makefile
+index 10314fa023058921caf4b6c8841886bbaeac24c4..a65d818e4ebee11757057f915ff9273019aba099 100644
+--- a/batman-adv/Makefile
++++ b/batman-adv/Makefile
+@@ -13,6 +13,7 @@ PKG_NAME:=batman-adv
+ PKG_VERSION:=2016.5
+ PKG_RELEASE:=1
+ PKG_MD5SUM:=6717a933a08dd2a01b00df30cb9f16a8
++PKG_HASH:=d0a0fc90c4f410b57d043215e253bb0b855efa5edbe165d87c17bfdcfafd0db7
+ 
+ PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
+ PKG_SOURCE_URL:=https://downloads.open-mesh.org/batman/releases/batman-adv-$(PKG_VERSION)

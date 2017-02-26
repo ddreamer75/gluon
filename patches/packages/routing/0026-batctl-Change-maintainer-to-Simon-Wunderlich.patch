@@ -1,0 +1,28 @@
+From: Sven Eckelmann <sven@narfation.org>
+Date: Mon, 23 Jan 2017 18:59:17 +0100
+Subject: batctl: Change maintainer to Simon Wunderlich
+
+Marek Lindner forwarded all recent requests regarding the package changes
+to Simon. He also asked that further changes should be handled directly
+without waiting for him.
+
+Simon Wunderlich already has write access to the repository and is
+therefore well prepared to take over the role of the maintainer.
+
+Signed-off-by: Sven Eckelmann <sven@narfation.org>
+
+Origin: upstream, https://github.com/openwrt-routing/packages/commit/64cb90b04e02267642e4ee696b9a777421393a91
+
+diff --git a/batctl/Makefile b/batctl/Makefile
+index bf305a24b522f118b3f52784dfd4fb28e38db351..790150347dd224740e76b6640e7176e0e5441b93 100644
+--- a/batctl/Makefile
++++ b/batctl/Makefile
+@@ -27,7 +27,7 @@ define Package/batctl
+   CATEGORY:=Network
+   DEPENDS:=+kmod-batman-adv +libnl-tiny +libc +librt
+   TITLE:=B.A.T.M.A.N. Advanced user space configuration tool batctl
+-  MAINTAINER:=Marek Lindner <mareklindner@neomailbox.ch>
++  MAINTAINER:=Simon Wunderlich <sw@simonwunderlich.de>
+ endef
+ 
+ define Package/batctl/description
