@@ -11,7 +11,7 @@ Signed-off-by: Sven Eckelmann <sven@narfation.org>
 
 diff --git a/batman-adv/patches/0005-batman-adv-Check-for-alloc-errors-when-preparing-TT-.patch b/batman-adv/patches/0005-batman-adv-Check-for-alloc-errors-when-preparing-TT-.patch
 new file mode 100644
-index 0000000..bf6478c
+index 0000000000000000000000000000000000000000..bf6478c75bbedc8eb1b1c93e6ce2ad744f4cfc18
 --- /dev/null
 +++ b/batman-adv/patches/0005-batman-adv-Check-for-alloc-errors-when-preparing-TT-.patch
 @@ -0,0 +1,39 @@

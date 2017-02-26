@@ -9,7 +9,7 @@ Subject: batman-adv: add patches from 2016.4-maint 2016-10-29
 Signed-off-by: Sven Eckelmann <sven@narfation.org>
 
 diff --git a/batman-adv/Makefile b/batman-adv/Makefile
-index 23b2f74..55f41fb 100644
+index 23b2f742c464d336bc47d47da6c99462e0ec5e07..55f41fbfc222d4759bd008739ef0eff9e05b951a 100644
 --- a/batman-adv/Makefile
 +++ b/batman-adv/Makefile
 @@ -11,7 +11,7 @@ include $(TOPDIR)/rules.mk
@@ -23,7 +23,7 @@ index 23b2f74..55f41fb 100644
  PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 diff --git a/batman-adv/patches/0001-batman-adv-Install-module-in-INSTALL_MOD_DIR-updates.patch b/batman-adv/patches/0001-batman-adv-Install-module-in-INSTALL_MOD_DIR-updates.patch
 new file mode 100644
-index 0000000..e5072e2
+index 0000000000000000000000000000000000000000..e5072e2fc32861af1877c3c095a29bed9e8f0afe
 --- /dev/null
 +++ b/batman-adv/patches/0001-batman-adv-Install-module-in-INSTALL_MOD_DIR-updates.patch
 @@ -0,0 +1,71 @@
@@ -100,7 +100,7 @@ index 0000000..e5072e2
 + 	@set -e; \
 diff --git a/batman-adv/patches/0002-batman-adv-Revert-fix-splat-on-disabling-an-interfac.patch b/batman-adv/patches/0002-batman-adv-Revert-fix-splat-on-disabling-an-interfac.patch
 new file mode 100644
-index 0000000..46d2779
+index 0000000000000000000000000000000000000000..46d27793a76cd5254643d7277b82ef50c5c92b88
 --- /dev/null
 +++ b/batman-adv/patches/0002-batman-adv-Revert-fix-splat-on-disabling-an-interfac.patch
 @@ -0,0 +1,32 @@
@@ -138,7 +138,7 @@ index 0000000..46d2779
 + out:
 diff --git a/batman-adv/patches/0003-batman-adv-Detect-missing-primaryif-during-tp_send-a.patch b/batman-adv/patches/0003-batman-adv-Detect-missing-primaryif-during-tp_send-a.patch
 new file mode 100644
-index 0000000..37c676d
+index 0000000000000000000000000000000000000000..37c676d87ac151a217e3e6f6381dd1afb3eeacc1
 --- /dev/null
 +++ b/batman-adv/patches/0003-batman-adv-Detect-missing-primaryif-during-tp_send-a.patch
 @@ -0,0 +1,28 @@

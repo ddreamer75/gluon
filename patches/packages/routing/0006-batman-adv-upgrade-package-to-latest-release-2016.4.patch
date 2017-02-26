@@ -7,7 +7,7 @@ Signed-off-by: Sven Eckelmann <sven@narfation.org>
 Origin: upstream, https://github.com/openwrt-routing/packages/commit/215d6b834fd1191c2b7c078020bc0cc204495caa
 
 diff --git a/batman-adv/Config.in b/batman-adv/Config.in
-index 48092e7..8c75f31 100644
+index 48092e71d37c090bda01eec5184b9728a8b36702..8c75f318e9001d7853145232060057d664931aae 100644
 --- a/batman-adv/Config.in
 +++ b/batman-adv/Config.in
 @@ -14,6 +14,11 @@ config KMOD_BATMAN_ADV_DAT
@@ -23,7 +23,7 @@ index 48092e7..8c75f31 100644
  	bool "enable multicast transmission optimization"
  	depends on PACKAGE_kmod-batman-adv
 diff --git a/batman-adv/Makefile b/batman-adv/Makefile
-index e12c166..23b2f74 100644
+index e12c166b4fc967e4bdf0b4c7ac03b74326529670..23b2f742c464d336bc47d47da6c99462e0ec5e07 100644
 --- a/batman-adv/Makefile
 +++ b/batman-adv/Makefile
 @@ -10,9 +10,9 @@ include $(TOPDIR)/rules.mk
@@ -47,7 +47,7 @@ index e12c166..23b2f74 100644
  	CONFIG_BATMAN_ADV_DAT=$(if $(CONFIG_KMOD_BATMAN_ADV_DAT),y,n) \
  	CONFIG_BATMAN_ADV_MCAST=$(if $(CONFIG_KMOD_BATMAN_ADV_MCAST),y,n) \
 diff --git a/batman-adv/files/compat-hacks.h b/batman-adv/files/compat-hacks.h
-index a7fc179..32903b5 100644
+index a7fc179a65754afcc40906684f7b0706282c2628..32903b569fa99f36d86780d381a42aa82f1744c3 100644
 --- a/batman-adv/files/compat-hacks.h
 +++ b/batman-adv/files/compat-hacks.h
 @@ -97,3 +97,93 @@ static inline void batadv_netif_trans_update(struct net_device *dev)
@@ -146,7 +146,7 @@ index a7fc179..32903b5 100644
 +
 diff --git a/batman-adv/patches/0001-batman-adv-Modify-neigh_list-only-with-rcu-list-func.patch b/batman-adv/patches/0001-batman-adv-Modify-neigh_list-only-with-rcu-list-func.patch
 deleted file mode 100644
-index a30d80b..0000000
+index a30d80b11501657b887111d1e3a4cb0c1b1d4b1d..0000000000000000000000000000000000000000
 --- a/batman-adv/patches/0001-batman-adv-Modify-neigh_list-only-with-rcu-list-func.patch
 +++ /dev/null
 @@ -1,29 +0,0 @@

@@ -15,7 +15,7 @@ Signed-off-by: Sven Eckelmann <sven.eckelmann@open-mesh.com>
 Origin: upstream, https://github.com/openwrt-routing/packages/commit/71f835fdeb2a7c37cdc3a5228e7ebc0e76efc8bd.patch
 
 diff --git a/batman-adv/Makefile b/batman-adv/Makefile
-index c45cbb4..1668083 100644
+index c45cbb4883f6a2761df700894e819ecb7aa50f84..1668083184d47236ec44c1ad4f10a3dfd5b8c57e 100644
 --- a/batman-adv/Makefile
 +++ b/batman-adv/Makefile
 @@ -62,10 +62,10 @@ PKG_EXTRA_CFLAGS:= \

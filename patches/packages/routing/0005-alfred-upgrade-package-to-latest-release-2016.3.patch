@@ -7,7 +7,7 @@ Signed-off-by: Sven Eckelmann <sven@narfation.org>
 Origin: upstream, https://github.com/openwrt-routing/packages/commit/674adedb8fc88e3a6d890b821d20d0077af51c07
 
 diff --git a/alfred/Makefile b/alfred/Makefile
-index 8d651a5..319795a 100644
+index 8d651a5cfc4697a6fd05ea2e3bcc83ad0d3011ac..319795a4cb06cd06911caf7699e8185aaf5616dc 100644
 --- a/alfred/Makefile
 +++ b/alfred/Makefile
 @@ -11,9 +11,9 @@ include $(TOPDIR)/rules.mk
@@ -48,7 +48,7 @@ index 8d651a5..319795a 100644
  	CFLAGS="$(TARGET_CPPFLAGS) $(TARGET_CFLAGS)" \
 diff --git a/alfred/patches/0001-alfred-vis-Fix-netlink-function-fallback.patch b/alfred/patches/0001-alfred-vis-Fix-netlink-function-fallback.patch
 new file mode 100644
-index 0000000..7115273
+index 0000000000000000000000000000000000000000..71152733271960e723f7a5c6859104c8e21d615f
 --- /dev/null
 +++ b/alfred/patches/0001-alfred-vis-Fix-netlink-function-fallback.patch
 @@ -0,0 +1,40 @@
@@ -94,7 +94,7 @@ index 0000000..7115273
 +
 diff --git a/alfred/patches/0002-alfred-vis-Fix-direct-neighbors-detection-with-origi.patch b/alfred/patches/0002-alfred-vis-Fix-direct-neighbors-detection-with-origi.patch
 new file mode 100644
-index 0000000..01a8510
+index 0000000000000000000000000000000000000000..01a8510072f5dcf4c7fde129df6b01f894c8c687
 --- /dev/null
 +++ b/alfred/patches/0002-alfred-vis-Fix-direct-neighbors-detection-with-origi.patch
 @@ -0,0 +1,50 @@

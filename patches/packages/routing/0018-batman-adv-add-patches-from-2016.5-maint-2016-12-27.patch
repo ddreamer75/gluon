@@ -10,7 +10,7 @@ Forwarded: no
 
 diff --git a/batman-adv/patches/0002-batman-adv-Decrease-hardif-refcnt-on-fragmentation-s.patch b/batman-adv/patches/0002-batman-adv-Decrease-hardif-refcnt-on-fragmentation-s.patch
 new file mode 100644
-index 0000000..17c990f
+index 0000000000000000000000000000000000000000..17c990faffe2bcefc838bdca9684bbe15742f219
 --- /dev/null
 +++ b/batman-adv/patches/0002-batman-adv-Decrease-hardif-refcnt-on-fragmentation-s.patch
 @@ -0,0 +1,63 @@

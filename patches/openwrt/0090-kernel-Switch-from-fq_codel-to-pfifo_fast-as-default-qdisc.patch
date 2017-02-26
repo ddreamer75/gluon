@@ -11,7 +11,7 @@ Bug-gluon: https://github.com/freifunk-gluon/gluon/issues/753
 
 diff --git a/package/kernel/mac80211/patches/914-mac80211-reduce_txqueuelen.patch b/package/kernel/mac80211/patches/914-mac80211-reduce_txqueuelen.patch
 new file mode 100644
-index 0000000..f274861
+index 0000000000000000000000000000000000000000..f274861cb06c3f5978eaf4148891e0c054055beb
 --- /dev/null
 +++ b/package/kernel/mac80211/patches/914-mac80211-reduce_txqueuelen.patch
 @@ -0,0 +1,10 @@
@@ -27,7 +27,7 @@ index 0000000..f274861
 + #if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,29))
 diff --git a/target/linux/generic/patches-3.18/662-use_fq_codel_by_default.patch b/target/linux/generic/patches-3.18/662-use_fq_codel_by_default.patch
 deleted file mode 100644
-index 39abfaa..0000000
+index 39abfaabea7b925be2929284eb98a90f3d556d1a..0000000000000000000000000000000000000000
 --- a/target/linux/generic/patches-3.18/662-use_fq_codel_by_default.patch
 +++ /dev/null
 @@ -1,95 +0,0 @@
@@ -128,7 +128,7 @@ index 39abfaa..0000000
 - 	register_qdisc(&pfifo_head_drop_qdisc_ops);
 diff --git a/target/linux/generic/patches-3.18/663-remove_pfifo_fast.patch b/target/linux/generic/patches-3.18/663-remove_pfifo_fast.patch
 deleted file mode 100644
-index 50b90b3..0000000
+index 50b90b375f611d78b90e7e6dd9c1228e8c09d28a..0000000000000000000000000000000000000000
 --- a/target/linux/generic/patches-3.18/663-remove_pfifo_fast.patch
 +++ /dev/null
 @@ -1,143 +0,0 @@

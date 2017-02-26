@@ -15,7 +15,7 @@ Signed-off-by: Sven Eckelmann <sven.eckelmann@open-mesh.com>
 
 diff --git a/package/kernel/mac80211/patches/950-ath9k_work-around-AR_CFG-0xdeadbeef-chip-hang.patch b/package/kernel/mac80211/patches/950-ath9k_work-around-AR_CFG-0xdeadbeef-chip-hang.patch
 new file mode 100644
-index 0000000..8e65df8
+index 0000000000000000000000000000000000000000..8e65df8ef705714ae9a721197e24e2933c6728d4
 --- /dev/null
 +++ b/package/kernel/mac80211/patches/950-ath9k_work-around-AR_CFG-0xdeadbeef-chip-hang.patch
 @@ -0,0 +1,157 @@

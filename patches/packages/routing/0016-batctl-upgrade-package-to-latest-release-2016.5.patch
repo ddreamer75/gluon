@@ -11,7 +11,7 @@ Signed-off-by: Sven Eckelmann <sven@narfation.org>
 Origin: backport, https://github.com/openwrt-routing/packages/commit/c425a4d8a6cc5fa29ab13d585e7115ded69387ed
 
 diff --git a/batctl/Makefile b/batctl/Makefile
-index 7ae81b5..bf305a2 100644
+index 7ae81b57c8850c85008bfc3c704677077d2be59d..bf305a24b522f118b3f52784dfd4fb28e38db351 100644
 --- a/batctl/Makefile
 +++ b/batctl/Makefile
 @@ -9,9 +9,9 @@ include $(TOPDIR)/rules.mk

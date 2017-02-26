@@ -7,7 +7,7 @@ Signed-off-by: Sven Eckelmann <sven@narfation.org>
 Origin: upstream, https://github.com/openwrt-routing/packages/commit/549909f89dd7553e71976d18dc6c13100186964f
 
 diff --git a/batman-adv/Makefile b/batman-adv/Makefile
-index 2a1335c..e12c166 100644
+index 2a1335cb2f3dd76475207a0288dcc4e3498d4208..e12c166b4fc967e4bdf0b4c7ac03b74326529670 100644
 --- a/batman-adv/Makefile
 +++ b/batman-adv/Makefile
 @@ -10,9 +10,9 @@ include $(TOPDIR)/rules.mk
@@ -44,7 +44,7 @@ index 2a1335c..e12c166 100644
  		CROSS_COMPILE="$(TARGET_CROSS)" \
  		SUBDIRS="$(PKG_BUILD_DIR)/net/batman-adv" \
 diff --git a/batman-adv/files/compat-hacks.h b/batman-adv/files/compat-hacks.h
-index cdf397d..a7fc179 100644
+index cdf397d9ade203c09ec8312bbd3ce02053c5d8fc..a7fc179a65754afcc40906684f7b0706282c2628 100644
 --- a/batman-adv/files/compat-hacks.h
 +++ b/batman-adv/files/compat-hacks.h
 @@ -33,6 +33,17 @@
@@ -67,7 +67,7 @@ index cdf397d..a7fc179 100644
  
 diff --git a/batman-adv/patches/0001-batman-adv-Avoid-nullptr-dereference-in-bla-after-vl.patch b/batman-adv/patches/0001-batman-adv-Avoid-nullptr-dereference-in-bla-after-vl.patch
 deleted file mode 100644
-index 49c0637..0000000
+index 49c06376b039e8df6caffc79fd83eaae2ca16946..0000000000000000000000000000000000000000
 --- a/batman-adv/patches/0001-batman-adv-Avoid-nullptr-dereference-in-bla-after-vl.patch
 +++ /dev/null
 @@ -1,35 +0,0 @@
@@ -108,7 +108,7 @@ index 49c0637..0000000
 - 	skb->protocol = eth_type_trans(skb, soft_iface);
 diff --git a/batman-adv/patches/0001-batman-adv-Modify-neigh_list-only-with-rcu-list-func.patch b/batman-adv/patches/0001-batman-adv-Modify-neigh_list-only-with-rcu-list-func.patch
 new file mode 100644
-index 0000000..a30d80b
+index 0000000000000000000000000000000000000000..a30d80b11501657b887111d1e3a4cb0c1b1d4b1d
 --- /dev/null
 +++ b/batman-adv/patches/0001-batman-adv-Modify-neigh_list-only-with-rcu-list-func.patch
 @@ -0,0 +1,29 @@
@@ -143,7 +143,7 @@ index 0000000..a30d80b
 + 	spin_unlock_bh(&hard_iface->neigh_list_lock);
 diff --git a/batman-adv/patches/0002-batman-adv-Avoid-nullptr-dereference-in-dat-after-vl.patch b/batman-adv/patches/0002-batman-adv-Avoid-nullptr-dereference-in-dat-after-vl.patch
 deleted file mode 100644
-index e5e72d7..0000000
+index e5e72d7d6052efa5c6fa5d1a7998255b4f879ae2..0000000000000000000000000000000000000000
 --- a/batman-adv/patches/0002-batman-adv-Avoid-nullptr-dereference-in-dat-after-vl.patch
 +++ /dev/null
 @@ -1,49 +0,0 @@
@@ -198,7 +198,7 @@ index e5e72d7..0000000
 - 	 * format based on the incoming request packet type. The assumption is
 diff --git a/batman-adv/patches/0003-batman-adv-Avoid-tt_req_node-list-put-for-unhashed-e.patch b/batman-adv/patches/0003-batman-adv-Avoid-tt_req_node-list-put-for-unhashed-e.patch
 deleted file mode 100644
-index 60d4e12..0000000
+index 60d4e12f59a9ed788b1f51ce17957efb72315186..0000000000000000000000000000000000000000
 --- a/batman-adv/patches/0003-batman-adv-Avoid-tt_req_node-list-put-for-unhashed-e.patch
 +++ /dev/null
 @@ -1,41 +0,0 @@
@@ -245,7 +245,7 @@ index 60d4e12..0000000
 - 
 diff --git a/batman-adv/patches/0004-batman-adv-Fix-orig_node_vlan-leak-on-orig_node_rele.patch b/batman-adv/patches/0004-batman-adv-Fix-orig_node_vlan-leak-on-orig_node_rele.patch
 deleted file mode 100644
-index 7af3162..0000000
+index 7af316221963f1284dbc792de30868b146c9cbe3..0000000000000000000000000000000000000000
 --- a/batman-adv/patches/0004-batman-adv-Fix-orig_node_vlan-leak-on-orig_node_rele.patch
 +++ /dev/null
 @@ -1,43 +0,0 @@
@@ -294,7 +294,7 @@ index 7af3162..0000000
 - 
 diff --git a/batman-adv/patches/0005-batman-adv-Fix-non-atomic-bla_claim-backbone_gw-acce.patch b/batman-adv/patches/0005-batman-adv-Fix-non-atomic-bla_claim-backbone_gw-acce.patch
 deleted file mode 100644
-index 5e0afdd..0000000
+index 5e0afdd0e63bf56c36e02ec4fde15a3f193efc69..0000000000000000000000000000000000000000
 --- a/batman-adv/patches/0005-batman-adv-Fix-non-atomic-bla_claim-backbone_gw-acce.patch
 +++ /dev/null
 @@ -1,291 +0,0 @@
@@ -591,7 +591,7 @@ index 5e0afdd..0000000
 - 	struct rcu_head rcu;
 diff --git a/batman-adv/patches/0006-batman-adv-Fix-reference-leak-in-batadv_find_router.patch b/batman-adv/patches/0006-batman-adv-Fix-reference-leak-in-batadv_find_router.patch
 deleted file mode 100644
-index 1eeea6e..0000000
+index 1eeea6ea84b5341397da335d1da9a0d4c8fef9a8..0000000000000000000000000000000000000000
 --- a/batman-adv/patches/0006-batman-adv-Fix-reference-leak-in-batadv_find_router.patch
 +++ /dev/null
 @@ -1,120 +0,0 @@
@@ -717,7 +717,7 @@ index 1eeea6e..0000000
 - 	struct batadv_priv *bat_priv;
 diff --git a/batman-adv/patches/0007-batman-adv-Free-last_bonding_candidate-on-release-of.patch b/batman-adv/patches/0007-batman-adv-Free-last_bonding_candidate-on-release-of.patch
 deleted file mode 100644
-index 9e548da..0000000
+index 9e548da332cdb7a890bbac919ae9158fe776e714..0000000000000000000000000000000000000000
 --- a/batman-adv/patches/0007-batman-adv-Free-last_bonding_candidate-on-release-of.patch
 +++ /dev/null
 @@ -1,45 +0,0 @@
@@ -768,7 +768,7 @@ index 9e548da..0000000
 - 		hlist_del_rcu(&vlan->list);
 diff --git a/batman-adv/patches/0008-batman-adv-Fix-speedy-join-in-gateway-client-mode.patch b/batman-adv/patches/0008-batman-adv-Fix-speedy-join-in-gateway-client-mode.patch
 deleted file mode 100644
-index e63b782..0000000
+index e63b782f4f823d346995a3568f3ec27ed736f25d..0000000000000000000000000000000000000000
 --- a/batman-adv/patches/0008-batman-adv-Fix-speedy-join-in-gateway-client-mode.patch
 +++ /dev/null
 @@ -1,35 +0,0 @@

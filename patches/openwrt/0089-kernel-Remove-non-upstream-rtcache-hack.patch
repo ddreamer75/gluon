@@ -77,7 +77,7 @@ crash (input == NULL):
 
 diff --git a/target/linux/generic/patches-3.18/050-backport_netfilter_rtcache.patch b/target/linux/generic/patches-3.18/050-backport_netfilter_rtcache.patch
 deleted file mode 100644
-index 9f23db6..0000000
+index 9f23db6a79b5b4ee0e2dfb36e1d250017a6fab2c..0000000000000000000000000000000000000000
 --- a/target/linux/generic/patches-3.18/050-backport_netfilter_rtcache.patch
 +++ /dev/null
 @@ -1,509 +0,0 @@

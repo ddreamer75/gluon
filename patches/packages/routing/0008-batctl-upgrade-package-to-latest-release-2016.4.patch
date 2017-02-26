@@ -7,7 +7,7 @@ Signed-off-by: Sven Eckelmann <sven@narfation.org>
 Origin: upstream, https://github.com/openwrt-routing/packages/commit/b429e28714296aaa14c03a0db6e53dd84cad3b25
 
 diff --git a/batctl/Makefile b/batctl/Makefile
-index 36cea26..7ae81b5 100644
+index 36cea26cc6cfe1d1b4a70c0996580f43b83ca646..7ae81b57c8850c85008bfc3c704677077d2be59d 100644
 --- a/batctl/Makefile
 +++ b/batctl/Makefile
 @@ -9,9 +9,9 @@ include $(TOPDIR)/rules.mk
@@ -24,7 +24,7 @@ index 36cea26..7ae81b5 100644
  PKG_SOURCE_URL:=https://downloads.open-mesh.org/batman/releases/batman-adv-$(PKG_VERSION)
 diff --git a/batctl/patches/0001-batctl-Work-around-uclibc-collision-for-__unused.patch b/batctl/patches/0001-batctl-Work-around-uclibc-collision-for-__unused.patch
 deleted file mode 100644
-index 558bc9d..0000000
+index 558bc9d6297eeeba70fd5bcd6858fd3407e5001c..0000000000000000000000000000000000000000
 --- a/batctl/patches/0001-batctl-Work-around-uclibc-collision-for-__unused.patch
 +++ /dev/null
 @@ -1,77 +0,0 @@

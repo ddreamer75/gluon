@@ -21,7 +21,7 @@ Signed-off-by: Sven Eckelmann <sven@narfation.org>
 Origin: backport, https://github.com/openwrt-routing/packages/commit/a80e8687720e430fd8f816e26eff4e07e6e244cf
 
 diff --git a/batman-adv/Makefile b/batman-adv/Makefile
-index 55f41fb..df64571 100644
+index 55f41fbfc222d4759bd008739ef0eff9e05b951a..df64571807f52700358c2697e8a0fc1a0d1eb062 100644
 --- a/batman-adv/Makefile
 +++ b/batman-adv/Makefile
 @@ -10,9 +10,9 @@ include $(TOPDIR)/rules.mk
@@ -38,7 +38,7 @@ index 55f41fb..df64571 100644
  PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
  PKG_SOURCE_URL:=https://downloads.open-mesh.org/batman/releases/batman-adv-$(PKG_VERSION)
 diff --git a/batman-adv/files/compat-hacks.h b/batman-adv/files/compat-hacks.h
-index 32903b5..af91f41 100644
+index 32903b569fa99f36d86780d381a42aa82f1744c3..af91f418fdca5620b10344803ca1497d657efe84 100644
 --- a/batman-adv/files/compat-hacks.h
 +++ b/batman-adv/files/compat-hacks.h
 @@ -49,6 +49,11 @@ int ipv6_mc_check_mld(struct sk_buff *skb, struct sk_buff **skb_trimmed);
@@ -71,7 +71,7 @@ index 32903b5..af91f41 100644
 +#endif /* < KERNEL_VERSION(4, 10, 0) */
 diff --git a/batman-adv/patches/0001-Add-compat-fallback-for-batadv_getlink_net.patch b/batman-adv/patches/0001-Add-compat-fallback-for-batadv_getlink_net.patch
 new file mode 100644
-index 0000000..c641828
+index 0000000000000000000000000000000000000000..c6418288e062582833367a062ebada6d60764a7c
 --- /dev/null
 +++ b/batman-adv/patches/0001-Add-compat-fallback-for-batadv_getlink_net.patch
 @@ -0,0 +1,29 @@
@@ -106,7 +106,7 @@ index 0000000..c641828
 + /**
 diff --git a/batman-adv/patches/0001-batman-adv-Install-module-in-INSTALL_MOD_DIR-updates.patch b/batman-adv/patches/0001-batman-adv-Install-module-in-INSTALL_MOD_DIR-updates.patch
 deleted file mode 100644
-index e5072e2..0000000
+index e5072e2fc32861af1877c3c095a29bed9e8f0afe..0000000000000000000000000000000000000000
 --- a/batman-adv/patches/0001-batman-adv-Install-module-in-INSTALL_MOD_DIR-updates.patch
 +++ /dev/null
 @@ -1,71 +0,0 @@
@@ -183,7 +183,7 @@ index e5072e2..0000000
 - 	@set -e; \
 diff --git a/batman-adv/patches/0002-batman-adv-Revert-fix-splat-on-disabling-an-interfac.patch b/batman-adv/patches/0002-batman-adv-Revert-fix-splat-on-disabling-an-interfac.patch
 deleted file mode 100644
-index 46d2779..0000000
+index 46d27793a76cd5254643d7277b82ef50c5c92b88..0000000000000000000000000000000000000000
 --- a/batman-adv/patches/0002-batman-adv-Revert-fix-splat-on-disabling-an-interfac.patch
 +++ /dev/null
 @@ -1,32 +0,0 @@
@@ -221,7 +221,7 @@ index 46d2779..0000000
 - out:
 diff --git a/batman-adv/patches/0003-batman-adv-Detect-missing-primaryif-during-tp_send-a.patch b/batman-adv/patches/0003-batman-adv-Detect-missing-primaryif-during-tp_send-a.patch
 deleted file mode 100644
-index 37c676d..0000000
+index 37c676d87ac151a217e3e6f6381dd1afb3eeacc1..0000000000000000000000000000000000000000
 --- a/batman-adv/patches/0003-batman-adv-Detect-missing-primaryif-during-tp_send-a.patch
 +++ /dev/null
 @@ -1,28 +0,0 @@
@@ -255,7 +255,7 @@ index 37c676d..0000000
 - 
 diff --git a/batman-adv/patches/0005-batman-adv-Check-for-alloc-errors-when-preparing-TT-.patch b/batman-adv/patches/0005-batman-adv-Check-for-alloc-errors-when-preparing-TT-.patch
 deleted file mode 100644
-index bf6478c..0000000
+index bf6478c75bbedc8eb1b1c93e6ce2ad744f4cfc18..0000000000000000000000000000000000000000
 --- a/batman-adv/patches/0005-batman-adv-Check-for-alloc-errors-when-preparing-TT-.patch
 +++ /dev/null
 @@ -1,39 +0,0 @@
@@ -299,7 +299,7 @@ index bf6478c..0000000
 - 
 - 		/* fill the rest of the tvlv with the real TT entries */
 diff --git a/batman-adv/patches/1001-batman-adv-introduce-no_rebroadcast-option.patch b/batman-adv/patches/1001-batman-adv-introduce-no_rebroadcast-option.patch
-index 2d274d1..bb580b6 100644
+index 2d274d1241d9805b8a226aaceb5aae14235f3ca4..bb580b69df8823e3fafd431cdfc2a836b4fe639e 100644
 --- a/batman-adv/patches/1001-batman-adv-introduce-no_rebroadcast-option.patch
 +++ b/batman-adv/patches/1001-batman-adv-introduce-no_rebroadcast-option.patch
 @@ -57,7 +57,7 @@ diff --git a/net/batman-adv/hard-interface.c b/net/batman-adv/hard-interface.c
@@ -379,7 +379,7 @@ index 2d274d1..bb580b6 100644
  2.10.2
 -
 diff --git a/batman-adv/patches/1002-batman-adv-decrease-maximum-fragment-size.patch b/batman-adv/patches/1002-batman-adv-decrease-maximum-fragment-size.patch
-index 1a0b561..de0141f 100644
+index 1a0b561d73cdd06117b8327945ed78ffe8951c52..de0141f8eef1a75c2bae541996e7db4adef583ac 100644
 --- a/batman-adv/patches/1002-batman-adv-decrease-maximum-fragment-size.patch
 +++ b/batman-adv/patches/1002-batman-adv-decrease-maximum-fragment-size.patch
 @@ -14,7 +14,7 @@ diff --git a/net/batman-adv/main.h b/net/batman-adv/main.h
@@ -398,7 +398,7 @@ index 1a0b561..de0141f 100644
 -
 diff --git a/batman-adv/patches/1003-Add-compat-fallback-for-batadv_getlink_net.patch b/batman-adv/patches/1003-Add-compat-fallback-for-batadv_getlink_net.patch
 deleted file mode 100644
-index 23592e8..0000000
+index 23592e83d793417c05d8e4d1696acc89e253b082..0000000000000000000000000000000000000000
 --- a/batman-adv/patches/1003-Add-compat-fallback-for-batadv_getlink_net.patch
 +++ /dev/null
 @@ -1,29 +0,0 @@

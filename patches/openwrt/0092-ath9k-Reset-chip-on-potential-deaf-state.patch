@@ -18,7 +18,7 @@ Signed-off-by: Sven Eckelmann <sven.eckelmann@open-mesh.com>
 
 diff --git a/package/kernel/mac80211/patches/951-ath9k_Reset-chip-on-potential-deaf-state.patch b/package/kernel/mac80211/patches/951-ath9k_Reset-chip-on-potential-deaf-state.patch
 new file mode 100644
-index 0000000..b83e5fb
+index 0000000000000000000000000000000000000000..b83e5fbfa2a57c6c734363bdb1566dc607ea5f55
 --- /dev/null
 +++ b/package/kernel/mac80211/patches/951-ath9k_Reset-chip-on-potential-deaf-state.patch
 @@ -0,0 +1,146 @@

@@ -4,7 +4,7 @@ Subject: batman-adv: Add get_link_net compat code for Linux < 4.0.0
 
 diff --git a/batman-adv/patches/1003-Add-compat-fallback-for-batadv_getlink_net.patch b/batman-adv/patches/1003-Add-compat-fallback-for-batadv_getlink_net.patch
 new file mode 100644
-index 0000000..23592e8
+index 0000000000000000000000000000000000000000..23592e83d793417c05d8e4d1696acc89e253b082
 --- /dev/null
 +++ b/batman-adv/patches/1003-Add-compat-fallback-for-batadv_getlink_net.patch
 @@ -0,0 +1,29 @@

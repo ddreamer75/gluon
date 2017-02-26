@@ -13,7 +13,7 @@ Signed-off-by: Matthias Schiffer <mschiffer@universe-factory.net>
 Origin: upstream, https://github.com/openwrt-routing/packages/commit/71f835fdeb2a7c37cdc3a5228e7ebc0e76efc8bd
 
 diff --git a/batman-adv/Makefile b/batman-adv/Makefile
-index 1668083..2a1335c 100644
+index 1668083184d47236ec44c1ad4f10a3dfd5b8c57e..2a1335cb2f3dd76475207a0288dcc4e3498d4208 100644
 --- a/batman-adv/Makefile
 +++ b/batman-adv/Makefile
 @@ -11,7 +11,7 @@ include $(TOPDIR)/rules.mk
@@ -35,7 +35,7 @@ index 1668083..2a1335c 100644
  
  define Build/Clean
 diff --git a/batman-adv/files/compat-hacks.h b/batman-adv/files/compat-hacks.h
-index a910c2d..cdf397d 100644
+index a910c2d9ae2db784656071119e85bf47db9988a2..cdf397d9ade203c09ec8312bbd3ce02053c5d8fc 100644
 --- a/batman-adv/files/compat-hacks.h
 +++ b/batman-adv/files/compat-hacks.h
 @@ -1,5 +1,7 @@

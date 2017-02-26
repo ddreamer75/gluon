@@ -11,7 +11,7 @@ Signed-off-by: Sven Eckelmann <sven@narfation.org>
 Origin: backport, https://github.com/openwrt-routing/packages/commit/e18c440d8b062603477e49a67ea9de31f749abce
 
 diff --git a/alfred/Makefile b/alfred/Makefile
-index 09f62d4..b5d37ce 100644
+index 09f62d4dda9cd2c43fd62e2e8bd74e22978d4021..b5d37ceef6e291d940dfcdf17c91c52b81ccfe07 100644
 --- a/alfred/Makefile
 +++ b/alfred/Makefile
 @@ -11,9 +11,9 @@ include $(TOPDIR)/rules.mk
