@@ -21,7 +21,7 @@ Signed-off-by: Sven Eckelmann <sven.eckelmann@open-mesh.com>
 Forwarded: https://github.com/openwrt/openwrt/pull/306
 
 diff --git a/package/kernel/mac80211/patches/402-ath_regd_optional.patch b/package/kernel/mac80211/patches/402-ath_regd_optional.patch
-index 4634283..a3572a2 100644
+index 463428371b4c96ee63b6eba1477023ff739c6129..a3572a297718f883f6126fc33aff5e14a046b9a0 100644
 --- a/package/kernel/mac80211/patches/402-ath_regd_optional.patch
 +++ b/package/kernel/mac80211/patches/402-ath_regd_optional.patch
 @@ -1,6 +1,15 @@
