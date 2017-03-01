@@ -1,0 +1,32 @@
+From: Sven Eckelmann <sven@narfation.org>
+Date: Tue, 28 Feb 2017 19:26:10 +0100
+Subject: batctl: upgrade package to latest release 2017.0
+
+ * remove root check for read-only sysfs and rtnl functionality
+ * coding style cleanups
+ * bugs squashed:
+   - fix check for root privileges when started under modified effective
+     uid
+
+Signed-off-by: Sven Eckelmann <sven@narfation.org>
+
+Origin: upstream, https://github.com/openwrt-routing/packages/commit/62f4fa6ee43b5905d72905630299aef79c908b58
+
+diff --git a/batctl/Makefile b/batctl/Makefile
+index 24bd16bd21a694da4d3c4a8ffcebdbdc4994ea18..819d42b1929395c193d82df3fe0fd83cae867bbf 100644
+--- a/batctl/Makefile
++++ b/batctl/Makefile
+@@ -9,10 +9,10 @@ include $(TOPDIR)/rules.mk
+ 
+ PKG_NAME:=batctl
+ 
+-PKG_VERSION:=2016.5
++PKG_VERSION:=2017.0
+ PKG_RELEASE:=0
+-PKG_MD5SUM:=7b33fb47c7fa5b317e9a152a286999fc
+-PKG_HASH:=07edeb1d87a548285be8c499542790a158fc8d94ef7ebb295f27ebf710024ae9
++PKG_MD5SUM:=17c0ac0746f1994ddacc88ebf48e5aec
++PKG_HASH:=c0bb1127d6070b46abeb8d6a63d1150d71fa85f87f9a846873b649a21934c686
+ 
+ PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
+ PKG_SOURCE_URL:=https://downloads.open-mesh.org/batman/releases/batman-adv-$(PKG_VERSION)

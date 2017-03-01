@@ -1,0 +1,20 @@
+From: Sven Eckelmann <sven@narfation.org>
+Date: Wed, 1 Mar 2017 20:38:52 +0100
+Subject: Revert "batman-adv: compile batman v by default"
+
+This increases the size without us using it. It also currently creates a
+regression in the gateway selection code. See
+https://www.open-mesh.org/issues/326 for more details
+
+Forwarded: no
+
+diff --git a/batman-adv/Config.in b/batman-adv/Config.in
+index 1b2399fc0ba6fecb8b9dd7c1abf3a0d791ae4621..8c75f318e9001d7853145232060057d664931aae 100644
+--- a/batman-adv/Config.in
++++ b/batman-adv/Config.in
+@@ -32,4 +32,4 @@ config KMOD_BATMAN_ADV_NC
+ config KMOD_BATMAN_ADV_BATMAN_V
+ 	bool "enable batman v routing algorithm"
+ 	depends on PACKAGE_kmod-batman-adv
+-	default y
++	default n

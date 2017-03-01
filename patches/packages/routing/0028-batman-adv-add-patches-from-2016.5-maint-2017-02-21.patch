@@ -7,7 +7,7 @@ Subject: batman-adv: add patches from 2016.5-maint 2017-02-21
 
 Signed-off-by: Sven Eckelmann <sven@narfation.org>
 
-Forwarded: no
+Origin: upstream, https://github.com/openwrt-routing/packages/pull/279/commits/0a4df2c301edf0e014c36210c1283cf089fbd651
 
 diff --git a/batman-adv/Makefile b/batman-adv/Makefile
 index a2eb70272e5b6290f67696c6d831238bc9f066d3..d3e916e959a7fb46e9f62c2a8d725895f240c58d 100644

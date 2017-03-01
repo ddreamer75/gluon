@@ -1,0 +1,29 @@
+From: Sven Eckelmann <sven@narfation.org>
+Date: Tue, 28 Feb 2017 19:26:50 +0100
+Subject: alfred: upgrade package to latest release 2017.0
+
+ * support IPv4 multicast distribution
+ * coding style cleanups
+
+Signed-off-by: Sven Eckelmann <sven@narfation.org>
+
+Origin: upstream, https://github.com/openwrt-routing/packages/commit/bc114d5acbfcca9bc7bc3f0845e27672897fd6a0
+
+diff --git a/alfred/Makefile b/alfred/Makefile
+index 379c0fe4d84d40723037b05c81aa155d78c50b3a..8b2d9e3453d49d2bd52669493e733bf0295bd4d9 100644
+--- a/alfred/Makefile
++++ b/alfred/Makefile
+@@ -11,10 +11,10 @@ include $(TOPDIR)/rules.mk
+ # The latest alfred git hash in PKG_REV can be obtained from https://git.open-mesh.org/alfred.git
+ #
+ PKG_NAME:=alfred
+-PKG_VERSION:=2016.5
++PKG_VERSION:=2017.0
+ PKG_RELEASE:=0
+-PKG_MD5SUM:=e03d422ed3b5a162b90e8af13389523f
+-PKG_HASH:=37b3babf7f37643cf296be11fb82d5730cf441a5a56f72fba96edae9f149c9d2
++PKG_MD5SUM:=2e9ae897b1d477f14d06389eb7c1f97b
++PKG_HASH:=f8d6d83d2ce30b2238354ce12073285387c0f4ca1a28060390ff50b411b50fa8
+ 
+ PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
+ PKG_SOURCE_URL:=https://downloads.open-mesh.org/batman/releases/batman-adv-$(PKG_VERSION)
