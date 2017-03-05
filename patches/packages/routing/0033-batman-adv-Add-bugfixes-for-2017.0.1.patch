@@ -1,0 +1,489 @@
+From: Sven Eckelmann <sven@narfation.org>
+Date: Sat, 4 Mar 2017 17:08:47 +0100
+Subject: batman-adv: Add bugfixes for 2017.0.1
+
+ * batman-adv: average: change to declare precision, not factor
+ * batman-adv: Keep fragments equally sized
+ * batman-adv: Initialize gw sel_class via batadv_algo
+
+Signed-off-by: Sven Eckelmann <sven@narfation.org>
+
+Origin: upstream, https://github.com/openwrt-routing/packages/commit/1c0419755d9d7c0f723fa3aa7fe166db07172db2.patch
+
+diff --git a/batman-adv/files/compat-hacks.h b/batman-adv/files/compat-hacks.h
+index 6c98a98611a13c83dec23fee1f5218fc646e0f5e..8c8a8899995756ebe7620a16aab6fc1b1bea3c6c 100644
+--- a/batman-adv/files/compat-hacks.h
++++ b/batman-adv/files/compat-hacks.h
+@@ -213,3 +213,78 @@ static inline int batadv_nla_put_u64_64bit(struct sk_buff *skb, int attrtype,
+ #define __ro_after_init
+ 
+ #endif /* < KERNEL_VERSION(4, 10, 0) */
++
++/* <DECLARE_EWMA> */
++
++#include <linux/version.h>
++#include_next <linux/average.h>
++
++#include <linux/bug.h>
++
++#ifdef DECLARE_EWMA
++#undef DECLARE_EWMA
++#endif /* DECLARE_EWMA */
++
++/*
++ * Exponentially weighted moving average (EWMA)
++ *
++ * This implements a fixed-precision EWMA algorithm, with both the
++ * precision and fall-off coefficient determined at compile-time
++ * and built into the generated helper funtions.
++ *
++ * The first argument to the macro is the name that will be used
++ * for the struct and helper functions.
++ *
++ * The second argument, the precision, expresses how many bits are
++ * used for the fractional part of the fixed-precision values.
++ *
++ * The third argument, the weight reciprocal, determines how the
++ * new values will be weighed vs. the old state, new values will
++ * get weight 1/weight_rcp and old values 1-1/weight_rcp. Note
++ * that this parameter must be a power of two for efficiency.
++ */
++
++#define DECLARE_EWMA(name, _precision, _weight_rcp)			\
++	struct ewma_##name {						\
++		unsigned long internal;					\
++	};								\
++	static inline void ewma_##name##_init(struct ewma_##name *e)	\
++	{								\
++		BUILD_BUG_ON(!__builtin_constant_p(_precision));	\
++		BUILD_BUG_ON(!__builtin_constant_p(_weight_rcp));	\
++		/*							\
++		 * Even if you want to feed it just 0/1 you should have	\
++		 * some bits for the non-fractional part...		\
++		 */							\
++		BUILD_BUG_ON((_precision) > 30);			\
++		BUILD_BUG_ON_NOT_POWER_OF_2(_weight_rcp);		\
++		e->internal = 0;					\
++	}								\
++	static inline unsigned long					\
++	ewma_##name##_read(struct ewma_##name *e)			\
++	{								\
++		BUILD_BUG_ON(!__builtin_constant_p(_precision));	\
++		BUILD_BUG_ON(!__builtin_constant_p(_weight_rcp));	\
++		BUILD_BUG_ON((_precision) > 30);			\
++		BUILD_BUG_ON_NOT_POWER_OF_2(_weight_rcp);		\
++		return e->internal >> (_precision);			\
++	}								\
++	static inline void ewma_##name##_add(struct ewma_##name *e,	\
++					     unsigned long val)		\
++	{								\
++		unsigned long internal = ACCESS_ONCE(e->internal);	\
++		unsigned long weight_rcp = ilog2(_weight_rcp);		\
++		unsigned long precision = _precision;			\
++									\
++		BUILD_BUG_ON(!__builtin_constant_p(_precision));	\
++		BUILD_BUG_ON(!__builtin_constant_p(_weight_rcp));	\
++		BUILD_BUG_ON((_precision) > 30);			\
++		BUILD_BUG_ON_NOT_POWER_OF_2(_weight_rcp);		\
++									\
++		ACCESS_ONCE(e->internal) = internal ?			\
++			(((internal << weight_rcp) - internal) +	\
++				(val << precision)) >> weight_rcp :	\
++			(val << precision);				\
++	}
++
++/* </DECLARE_EWMA> */
+diff --git a/batman-adv/patches/0001-batman-adv-average-change-to-declare-precision-not-f.patch b/batman-adv/patches/0001-batman-adv-average-change-to-declare-precision-not-f.patch
+new file mode 100644
+index 0000000000000000000000000000000000000000..c2f94677930abc9c81c03bd70dc20668ead0291d
+--- /dev/null
++++ b/batman-adv/patches/0001-batman-adv-average-change-to-declare-precision-not-f.patch
+@@ -0,0 +1,132 @@
++From: Johannes Berg <johannes.berg@intel.com>
++Date: Wed, 15 Feb 2017 09:49:26 +0100
++Subject: [PATCH] batman-adv: average: change to declare precision, not factor
++
++Declaring the factor is counter-intuitive, and people are prone
++to using small(-ish) values even when that makes no sense.
++
++Change the DECLARE_EWMA() macro to take the fractional precision,
++in bits, rather than a factor, and update all users.
++
++While at it, add some more documentation.
++
++Acked-by: David S. Miller <davem@davemloft.net>
++Signed-off-by: Johannes Berg <johannes.berg@intel.com>
++[sven@narfation.org: Added compatibility code]
++Signed-off-by: Sven Eckelmann <sven@narfation.org>
++---
++ compat-include/linux/average.h | 67 +++++++++++++++++++++++++++---------------
++ net/batman-adv/types.h         |  2 +-
++ 2 files changed, 45 insertions(+), 24 deletions(-)
++
++diff --git a/compat-include/linux/average.h b/compat-include/linux/average.h
++index ec022cb6..a1e3c254 100644
++--- a/compat-include/linux/average.h
+++++ b/compat-include/linux/average.h
++@@ -26,49 +26,70 @@
++ 
++ #include <linux/bug.h>
++ 
++-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0)
+++#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 3, 0)
+++#undef DECLARE_EWMA
+++#endif /* < KERNEL_VERSION(4, 3, 0) */
++ 
++-/* Exponentially weighted moving average (EWMA) */
+++/*
+++ * Exponentially weighted moving average (EWMA)
+++ *
+++ * This implements a fixed-precision EWMA algorithm, with both the
+++ * precision and fall-off coefficient determined at compile-time
+++ * and built into the generated helper funtions.
+++ *
+++ * The first argument to the macro is the name that will be used
+++ * for the struct and helper functions.
+++ *
+++ * The second argument, the precision, expresses how many bits are
+++ * used for the fractional part of the fixed-precision values.
+++ *
+++ * The third argument, the weight reciprocal, determines how the
+++ * new values will be weighed vs. the old state, new values will
+++ * get weight 1/weight_rcp and old values 1-1/weight_rcp. Note
+++ * that this parameter must be a power of two for efficiency.
+++ */
++ 
++-#define DECLARE_EWMA(name, _factor, _weight)				\
+++#define DECLARE_EWMA(name, _precision, _weight_rcp)			\
++ 	struct ewma_##name {						\
++ 		unsigned long internal;					\
++ 	};								\
++ 	static inline void ewma_##name##_init(struct ewma_##name *e)	\
++ 	{								\
++-		BUILD_BUG_ON(!__builtin_constant_p(_factor));		\
++-		BUILD_BUG_ON(!__builtin_constant_p(_weight));		\
++-		BUILD_BUG_ON_NOT_POWER_OF_2(_factor);			\
++-		BUILD_BUG_ON_NOT_POWER_OF_2(_weight);			\
+++		BUILD_BUG_ON(!__builtin_constant_p(_precision));	\
+++		BUILD_BUG_ON(!__builtin_constant_p(_weight_rcp));	\
+++		/*							\
+++		 * Even if you want to feed it just 0/1 you should have	\
+++		 * some bits for the non-fractional part...		\
+++		 */							\
+++		BUILD_BUG_ON((_precision) > 30);			\
+++		BUILD_BUG_ON_NOT_POWER_OF_2(_weight_rcp);		\
++ 		e->internal = 0;					\
++ 	}								\
++ 	static inline unsigned long					\
++ 	ewma_##name##_read(struct ewma_##name *e)			\
++ 	{								\
++-		BUILD_BUG_ON(!__builtin_constant_p(_factor));		\
++-		BUILD_BUG_ON(!__builtin_constant_p(_weight));		\
++-		BUILD_BUG_ON_NOT_POWER_OF_2(_factor);			\
++-		BUILD_BUG_ON_NOT_POWER_OF_2(_weight);			\
++-		return e->internal >> ilog2(_factor);			\
+++		BUILD_BUG_ON(!__builtin_constant_p(_precision));	\
+++		BUILD_BUG_ON(!__builtin_constant_p(_weight_rcp));	\
+++		BUILD_BUG_ON((_precision) > 30);			\
+++		BUILD_BUG_ON_NOT_POWER_OF_2(_weight_rcp);		\
+++		return e->internal >> (_precision);			\
++ 	}								\
++ 	static inline void ewma_##name##_add(struct ewma_##name *e,	\
++ 					     unsigned long val)		\
++ 	{								\
++ 		unsigned long internal = ACCESS_ONCE(e->internal);	\
++-		unsigned long weight = ilog2(_weight);			\
++-		unsigned long factor = ilog2(_factor);			\
+++		unsigned long weight_rcp = ilog2(_weight_rcp);		\
+++		unsigned long precision = _precision;			\
++ 									\
++-		BUILD_BUG_ON(!__builtin_constant_p(_factor));		\
++-		BUILD_BUG_ON(!__builtin_constant_p(_weight));		\
++-		BUILD_BUG_ON_NOT_POWER_OF_2(_factor);			\
++-		BUILD_BUG_ON_NOT_POWER_OF_2(_weight);			\
+++		BUILD_BUG_ON(!__builtin_constant_p(_precision));	\
+++		BUILD_BUG_ON(!__builtin_constant_p(_weight_rcp));	\
+++		BUILD_BUG_ON((_precision) > 30);			\
+++		BUILD_BUG_ON_NOT_POWER_OF_2(_weight_rcp);		\
++ 									\
++ 		ACCESS_ONCE(e->internal) = internal ?			\
++-			(((internal << weight) - internal) +		\
++-				(val << factor)) >> weight :		\
++-			(val << factor);				\
+++			(((internal << weight_rcp) - internal) +	\
+++				(val << precision)) >> weight_rcp :	\
+++			(val << precision);				\
++ 	}
++ 
++-#endif /* < KERNEL_VERSION(4, 3, 0) */
++-
++ #endif /* _NET_BATMAN_ADV_COMPAT_LINUX_AVERAGE_H */
++diff --git a/net/batman-adv/types.h b/net/batman-adv/types.h
++index 8f64a5c0..66b25e41 100644
++--- a/net/batman-adv/types.h
+++++ b/net/batman-adv/types.h
++@@ -402,7 +402,7 @@ struct batadv_gw_node {
++ 	struct rcu_head rcu;
++ };
++ 
++-DECLARE_EWMA(throughput, 1024, 8)
+++DECLARE_EWMA(throughput, 10, 8)
++ 
++ /**
++  * struct batadv_hardif_neigh_node_bat_v - B.A.T.M.A.N. V private neighbor
+diff --git a/batman-adv/patches/0002-batman-adv-Keep-fragments-equally-sized.patch b/batman-adv/patches/0002-batman-adv-Keep-fragments-equally-sized.patch
+new file mode 100644
+index 0000000000000000000000000000000000000000..3286cf370df40f86c7d87f0c5d6f97b522ac2325
+--- /dev/null
++++ b/batman-adv/patches/0002-batman-adv-Keep-fragments-equally-sized.patch
+@@ -0,0 +1,103 @@
++From: Sven Eckelmann <sven@narfation.org>
++Date: Wed, 22 Feb 2017 17:25:42 +0100
++Subject: [PATCH] batman-adv: Keep fragments equally sized
++
++The batman-adv fragmentation packets have the design problem that they
++cannot be refragmented and cannot handle padding by the underlying link.
++The latter often leads to problems when networks are incorrectly configured
++and don't use a common MTU.
++
++The sender could for example fragment a 1271 byte frame (plus external
++ethernet header (14) and batadv unicast header (10)) to fit in a 1280 bytes
++large MTU of the underlying link (max. 1294 byte frames). This would create
++a 1294 bytes large frame (fragment 2) and a 55 bytes large frame
++(fragment 1). The extra 54 bytes are the fragment header (20) added to each
++fragment and the external ethernet header (14) for the second fragment.
++
++Let us assume that the next hop is then not able to transport 1294 bytes to
++its next hop. The 1294 byte large frame will be dropped but the 55 bytes
++large fragment will still be forwarded to its destination.
++
++Or let us assume that the underlying hardware requires that each frame has
++a minimum size (e.g. 60 bytes). Then it will pad the 55 bytes frame to 60
++bytes. The receiver of the 60 bytes frame will no longer be able to
++correctly assemble the two frames together because it is not aware that 5
++bytes of the 60 bytes frame are padding and don't belong to the reassembled
++frame.
++
++This can partly be avoided by splitting frames more equally. In this
++example, the 675 and 674 bytes large fragment frames could both potentially
++reach its destination without being too large or too small.
++
++Reported-by: Martin Weinelt <martin@darmstadt.freifunk.net>
++Fixes: db56e4ecf5c2 ("batman-adv: Fragment and send skbs larger than mtu")
++Signed-off-by: Sven Eckelmann <sven@narfation.org>
++Acked-by: Linus Lüssing <linus.luessing@c0d3.blue>
++---
++ net/batman-adv/fragmentation.c | 20 +++++++++++++-------
++ 1 file changed, 13 insertions(+), 7 deletions(-)
++
++diff --git a/net/batman-adv/fragmentation.c b/net/batman-adv/fragmentation.c
++index 11a23fd6..8f964bea 100644
++--- a/net/batman-adv/fragmentation.c
+++++ b/net/batman-adv/fragmentation.c
++@@ -404,7 +404,7 @@ bool batadv_frag_skb_fwd(struct sk_buff *skb,
++  * batadv_frag_create - create a fragment from skb
++  * @skb: skb to create fragment from
++  * @frag_head: header to use in new fragment
++- * @mtu: size of new fragment
+++ * @fragment_size: size of new fragment
++  *
++  * Split the passed skb into two fragments: A new one with size matching the
++  * passed mtu and the old one with the rest. The new skb contains data from the
++@@ -414,11 +414,11 @@ bool batadv_frag_skb_fwd(struct sk_buff *skb,
++  */
++ static struct sk_buff *batadv_frag_create(struct sk_buff *skb,
++ 					  struct batadv_frag_packet *frag_head,
++-					  unsigned int mtu)
+++					  unsigned int fragment_size)
++ {
++ 	struct sk_buff *skb_fragment;
++ 	unsigned int header_size = sizeof(*frag_head);
++-	unsigned int fragment_size = mtu - header_size;
+++	unsigned int mtu = fragment_size + header_size;
++ 
++ 	skb_fragment = netdev_alloc_skb(NULL, mtu + ETH_HLEN);
++ 	if (!skb_fragment)
++@@ -456,7 +456,7 @@ int batadv_frag_send_packet(struct sk_buff *skb,
++ 	struct sk_buff *skb_fragment;
++ 	unsigned int mtu = neigh_node->if_incoming->net_dev->mtu;
++ 	unsigned int header_size = sizeof(frag_header);
++-	unsigned int max_fragment_size, max_packet_size;
+++	unsigned int max_fragment_size, num_fragments;
++ 	int ret;
++ 
++ 	/* To avoid merge and refragmentation at next-hops we never send
++@@ -464,10 +464,15 @@ int batadv_frag_send_packet(struct sk_buff *skb,
++ 	 */
++ 	mtu = min_t(unsigned int, mtu, BATADV_FRAG_MAX_FRAG_SIZE);
++ 	max_fragment_size = mtu - header_size;
++-	max_packet_size = max_fragment_size * BATADV_FRAG_MAX_FRAGMENTS;
+++
+++	if (skb->len == 0 || max_fragment_size == 0)
+++		return -EINVAL;
+++
+++	num_fragments = (skb->len - 1) / max_fragment_size + 1;
+++	max_fragment_size = (skb->len - 1) / num_fragments + 1;
++ 
++ 	/* Don't even try to fragment, if we need more than 16 fragments */
++-	if (skb->len > max_packet_size) {
+++	if (num_fragments > BATADV_FRAG_MAX_FRAGMENTS) {
++ 		ret = -EAGAIN;
++ 		goto free_skb;
++ 	}
++@@ -507,7 +512,8 @@ int batadv_frag_send_packet(struct sk_buff *skb,
++ 			goto put_primary_if;
++ 		}
++ 
++-		skb_fragment = batadv_frag_create(skb, &frag_header, mtu);
+++		skb_fragment = batadv_frag_create(skb, &frag_header,
+++						  max_fragment_size);
++ 		if (!skb_fragment) {
++ 			ret = -ENOMEM;
++ 			goto put_primary_if;
+diff --git a/batman-adv/patches/0003-batman-adv-Initialize-gw-sel_class-via-batadv_algo.patch b/batman-adv/patches/0003-batman-adv-Initialize-gw-sel_class-via-batadv_algo.patch
+new file mode 100644
+index 0000000000000000000000000000000000000000..f65ac457fe799e390bbcc384a104cf3897f34012
+--- /dev/null
++++ b/batman-adv/patches/0003-batman-adv-Initialize-gw-sel_class-via-batadv_algo.patch
+@@ -0,0 +1,141 @@
++From: Sven Eckelmann <sven@narfation.org>
++Date: Sat, 4 Mar 2017 15:48:50 +0100
++Subject: [PATCH] batman-adv: Initialize gw sel_class via batadv_algo
++
++The gateway selection class variable is shared between different algorithm
++versions. But the interpretation of the content is algorithm specific. The
++initialization is therefore also algorithm specific.
++
++But this was implemented incorrectly and the initialization for BATMAN_V
++always overwrote the value previously written for BATMAN_IV. This could
++only be avoided when BATMAN_V was disabled during compile time.
++
++Using a special batadv_algo hook for this initialization avoids this
++problem.
++
++Fixes: 80b2d47be2c7 ("batman-adv: B.A.T.M.A.N. V - implement GW selection logic")
++Signed-off-by: Sven Eckelmann <sven@narfation.org>
++---
++ net/batman-adv/bat_iv_ogm.c     | 11 +++++++++++
++ net/batman-adv/bat_v.c          | 14 +++++++++++---
++ net/batman-adv/gateway_common.c |  5 +++++
++ net/batman-adv/soft-interface.c |  1 -
++ net/batman-adv/types.h          |  2 ++
++ 5 files changed, 29 insertions(+), 4 deletions(-)
++
++diff --git a/net/batman-adv/bat_iv_ogm.c b/net/batman-adv/bat_iv_ogm.c
++index 7c3d994e..71343d0f 100644
++--- a/net/batman-adv/bat_iv_ogm.c
+++++ b/net/batman-adv/bat_iv_ogm.c
++@@ -2477,6 +2477,16 @@ static void batadv_iv_iface_activate(struct batadv_hard_iface *hard_iface)
++ 	batadv_iv_ogm_schedule(hard_iface);
++ }
++ 
+++/**
+++ * batadv_iv_init_sel_class - initialize GW selection class
+++ * @bat_priv: the bat priv with all the soft interface information
+++ */
+++static void batadv_iv_init_sel_class(struct batadv_priv *bat_priv)
+++{
+++	/* set default TQ difference threshold to 20 */
+++	atomic_set(&bat_priv->gw.sel_class, 20);
+++}
+++
++ static struct batadv_gw_node *
++ batadv_iv_gw_get_best_gw_node(struct batadv_priv *bat_priv)
++ {
++@@ -2823,6 +2833,7 @@ static struct batadv_algo_ops batadv_batman_iv __read_mostly = {
++ 		.del_if = batadv_iv_ogm_orig_del_if,
++ 	},
++ 	.gw = {
+++		.init_sel_class = batadv_iv_init_sel_class,
++ 		.get_best_gw_node = batadv_iv_gw_get_best_gw_node,
++ 		.is_eligible = batadv_iv_gw_is_eligible,
++ #ifdef CONFIG_BATMAN_ADV_DEBUGFS
++diff --git a/net/batman-adv/bat_v.c b/net/batman-adv/bat_v.c
++index 0acd081d..a36c8e72 100644
++--- a/net/batman-adv/bat_v.c
+++++ b/net/batman-adv/bat_v.c
++@@ -668,6 +668,16 @@ static bool batadv_v_neigh_is_sob(struct batadv_neigh_node *neigh1,
++ 	return ret;
++ }
++ 
+++/**
+++ * batadv_v_init_sel_class - initialize GW selection class
+++ * @bat_priv: the bat priv with all the soft interface information
+++ */
+++static void batadv_v_init_sel_class(struct batadv_priv *bat_priv)
+++{
+++	/* set default throughput difference threshold to 5Mbps */
+++	atomic_set(&bat_priv->gw.sel_class, 50);
+++}
+++
++ static ssize_t batadv_v_store_sel_class(struct batadv_priv *bat_priv,
++ 					char *buff, size_t count)
++ {
++@@ -1052,6 +1062,7 @@ static struct batadv_algo_ops batadv_batman_v __read_mostly = {
++ 		.dump = batadv_v_orig_dump,
++ 	},
++ 	.gw = {
+++		.init_sel_class = batadv_v_init_sel_class,
++ 		.store_sel_class = batadv_v_store_sel_class,
++ 		.show_sel_class = batadv_v_show_sel_class,
++ 		.get_best_gw_node = batadv_v_gw_get_best_gw_node,
++@@ -1092,9 +1103,6 @@ int batadv_v_mesh_init(struct batadv_priv *bat_priv)
++ 	if (ret < 0)
++ 		return ret;
++ 
++-	/* set default throughput difference threshold to 5Mbps */
++-	atomic_set(&bat_priv->gw.sel_class, 50);
++-
++ 	return 0;
++ }
++ 
++diff --git a/net/batman-adv/gateway_common.c b/net/batman-adv/gateway_common.c
++index 5db2e43e..33940c5c 100644
++--- a/net/batman-adv/gateway_common.c
+++++ b/net/batman-adv/gateway_common.c
++@@ -253,6 +253,11 @@ static void batadv_gw_tvlv_ogm_handler_v1(struct batadv_priv *bat_priv,
++  */
++ void batadv_gw_init(struct batadv_priv *bat_priv)
++ {
+++	if (bat_priv->algo_ops->gw.init_sel_class)
+++		bat_priv->algo_ops->gw.init_sel_class(bat_priv);
+++	else
+++		atomic_set(&bat_priv->gw.sel_class, 1);
+++
++ 	batadv_tvlv_handler_register(bat_priv, batadv_gw_tvlv_ogm_handler_v1,
++ 				     NULL, BATADV_TVLV_GW, 1,
++ 				     BATADV_TVLV_HANDLER_OGM_CIFNOTFND);
++diff --git a/net/batman-adv/soft-interface.c b/net/batman-adv/soft-interface.c
++index 5d099b2e..d042c99a 100644
++--- a/net/batman-adv/soft-interface.c
+++++ b/net/batman-adv/soft-interface.c
++@@ -819,7 +819,6 @@ static int batadv_softif_init_late(struct net_device *dev)
++ 	atomic_set(&bat_priv->mcast.num_want_all_ipv6, 0);
++ #endif
++ 	atomic_set(&bat_priv->gw.mode, BATADV_GW_MODE_OFF);
++-	atomic_set(&bat_priv->gw.sel_class, 20);
++ 	atomic_set(&bat_priv->gw.bandwidth_down, 100);
++ 	atomic_set(&bat_priv->gw.bandwidth_up, 20);
++ 	atomic_set(&bat_priv->orig_interval, 1000);
++diff --git a/net/batman-adv/types.h b/net/batman-adv/types.h
++index 66b25e41..246f21b4 100644
++--- a/net/batman-adv/types.h
+++++ b/net/batman-adv/types.h
++@@ -1489,6 +1489,7 @@ struct batadv_algo_orig_ops {
++ 
++ /**
++  * struct batadv_algo_gw_ops - mesh algorithm callbacks (GW specific)
+++ * @init_sel_class: initialize GW selection class (optional)
++  * @store_sel_class: parse and stores a new GW selection class (optional)
++  * @show_sel_class: prints the current GW selection class (optional)
++  * @get_best_gw_node: select the best GW from the list of available nodes
++@@ -1499,6 +1500,7 @@ struct batadv_algo_orig_ops {
++  * @dump: dump gateways to a netlink socket (optional)
++  */
++ struct batadv_algo_gw_ops {
+++	void (*init_sel_class)(struct batadv_priv *bat_priv);
++ 	ssize_t (*store_sel_class)(struct batadv_priv *bat_priv, char *buff,
++ 				   size_t count);
++ 	ssize_t (*show_sel_class)(struct batadv_priv *bat_priv, char *buff);
