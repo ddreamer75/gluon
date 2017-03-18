@@ -1,0 +1,431 @@
+From: Jan-Philipp Litza <janphilipp@litza.de>
+Date: Thu, 22 Dec 2016 23:40:00 +0100
+Subject: Add package respondd-module-airtime (#156)
+
+See README.md for more information.
+
+Origin: upstream, https://github.com/freifunk-gluon/packages/commit/e8cc8eeee6d8224e9bb069484c7f381b160b3111
+
+diff --git a/net/respondd-module-airtime/Makefile b/net/respondd-module-airtime/Makefile
+new file mode 100644
+index 0000000000000000000000000000000000000000..2cf692ca497a59aca8b70abc53af7285746b19c1
+--- /dev/null
++++ b/net/respondd-module-airtime/Makefile
+@@ -0,0 +1,42 @@
++include $(TOPDIR)/rules.mk
++
++PKG_NAME:=respondd-module-airtime
++PKG_VERSION:=1
++PKG_RELEASE:=1
++
++PKG_LICENSE:=BSD-2-Clause
++
++PKG_BUILD_DIR := $(BUILD_DIR)/$(PKG_NAME)
++PKG_BUILD_DEPENDS := respondd
++
++include $(INCLUDE_DIR)/package.mk
++
++define Package/respondd-module-airtime
++  SECTION:=net
++  CATEGORY:=Network
++  TITLE:=Add airtime to respondd
++  DEPENDS:=+respondd +libnl-tiny
++endef
++
++define Build/Prepare
++	mkdir -p $(PKG_BUILD_DIR)
++	$(CP) ./src/* $(PKG_BUILD_DIR)/
++endef
++
++define Build/Configure
++endef
++
++
++TARGET_CFLAGS += -I$(STAGING_DIR)/usr/include/libnl-tiny
++
++define Build/Compile
++	CFLAGS="$(TARGET_CFLAGS)" CPPFLAGS="$(TARGET_CPPFLAGS)" $(MAKE) -C $(PKG_BUILD_DIR) $(TARGET_CONFIGURE_OPTS)
++endef
++
++
++define Package/respondd-module-airtime/install
++	$(INSTALL_DIR) $(1)/lib/respondd
++	$(CP) $(PKG_BUILD_DIR)/respondd.so $(1)/lib/respondd/airtime.so
++endef
++
++$(eval $(call BuildPackage,respondd-module-airtime))
+diff --git a/net/respondd-module-airtime/README.md b/net/respondd-module-airtime/README.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..eb82b0cf59e94fae1c8e7f0a4b08370e59a884c8
+--- /dev/null
++++ b/net/respondd-module-airtime/README.md
+@@ -0,0 +1,36 @@
++This module adds a respondd airtime usage statistics provider.
++The format is the following:
++
++```json
++{
++  "statistics": {
++    "wireless": [
++      {
++        "frequency": 5220,
++        "active": 366561161,
++        "busy": 46496566,
++        "rx": 808415,
++        "tx": 41711344,
++        "noise": 162
++      },
++      {
++        "frequency": 2437,
++        "active": 366649704,
++        "busy": 205221222,
++        "rx": 108121446,
++        "tx": 85453679,
++        "noise": 161
++      }
++    ]
++  }
++}
++```
++
++The numbers `active`, `busy`, `rx` and `tx` are times in milliseconds, where
++`busy`, `rx` and `tx` have to be interpreted by taking the quotient with
++`active`.
++
++The motivation for having a list with the frequency as a value in the objects
++instead of having an object with the frequency as keys is that multiple wifi
++devices might be present, in which case the same frequency can appear multiple
++times (because the statistics are reported once for every phy).
+diff --git a/net/respondd-module-airtime/src/Makefile b/net/respondd-module-airtime/src/Makefile
+new file mode 100644
+index 0000000000000000000000000000000000000000..0c99578dfb4b946e5d11b11ac216773345601437
+--- /dev/null
++++ b/net/respondd-module-airtime/src/Makefile
+@@ -0,0 +1,16 @@
++# standard compliance
++CFLAGS         += -std=c99
++
++# warnings
++CFLAGS         += -Wall -Wextra -Wformat=2 -Wshadow -Wpointer-arith
++CFLAGS         += -pedantic
++
++all: respondd.so
++
++%.c: %.h
++
++respondd.so: airtime.c ifaces.c respondd.c
++	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -shared -fPIC -D_GNU_SOURCE -lnl-tiny -o $@ $^ $(LDLIBS)
++
++clean:
++	rm -rf *.so
+diff --git a/net/respondd-module-airtime/src/airtime.c b/net/respondd-module-airtime/src/airtime.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..d6d071cfa12f5b0d0bee0190e8117db1814e1fd2
+--- /dev/null
++++ b/net/respondd-module-airtime/src/airtime.c
+@@ -0,0 +1,137 @@
++/*
++  Copyright (c) 2016, Julian Kornberger <jk+freifunk@digineo.de>
++                      Martin Müller <geno+ffhb@fireorbit.de>
++                      Jan-Philipp Litza <janphilipp@litza.de>
++  All rights reserved.
++
++  Redistribution and use in source and binary forms, with or without
++  modification, are permitted provided that the following conditions are met:
++
++    1. Redistributions of source code must retain the above copyright notice,
++       this list of conditions and the following disclaimer.
++    2. Redistributions in binary form must reproduce the above copyright notice,
++       this list of conditions and the following disclaimer in the documentation
++       and/or other materials provided with the distribution.
++
++  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
++  DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
++  FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
++  DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
++  SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
++  CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
++  OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++  OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++*/
++
++#include <sys/socket.h>
++#include <linux/nl80211.h>
++#include <netlink/netlink.h>
++#include <netlink/genl/genl.h>
++#include <netlink/genl/ctrl.h>
++#include <net/if.h>
++
++#include "airtime.h"
++
++/*
++ * Excerpt from nl80211.h:
++ * enum nl80211_survey_info - survey information
++ *
++ * These attribute types are used with %NL80211_ATTR_SURVEY_INFO
++ * when getting information about a survey.
++ *
++ * @__NL80211_SURVEY_INFO_INVALID: attribute number 0 is reserved
++ * @NL80211_SURVEY_INFO_FREQUENCY: center frequency of channel
++ * @NL80211_SURVEY_INFO_NOISE: noise level of channel (u8, dBm)
++ * @NL80211_SURVEY_INFO_IN_USE: channel is currently being used
++ * @NL80211_SURVEY_INFO_CHANNEL_TIME: amount of time (in ms) that the radio
++ *	spent on this channel
++ * @NL80211_SURVEY_INFO_CHANNEL_TIME_BUSY: amount of the time the primary
++ *	channel was sensed busy (either due to activity or energy detect)
++ * @NL80211_SURVEY_INFO_CHANNEL_TIME_EXT_BUSY: amount of time the extension
++ *	channel was sensed busy
++ * @NL80211_SURVEY_INFO_CHANNEL_TIME_RX: amount of time the radio spent
++ *	receiving data
++ * @NL80211_SURVEY_INFO_CHANNEL_TIME_TX: amount of time the radio spent
++ *	transmitting data
++ * @NL80211_SURVEY_INFO_MAX: highest survey info attribute number
++ *	currently defined
++ * @__NL80211_SURVEY_INFO_AFTER_LAST: internal use
++ */
++
++static int survey_airtime_handler(struct nl_msg *msg, void *arg) {
++	struct nlattr *tb[NL80211_ATTR_MAX + 1];
++	struct nlattr *sinfo[NL80211_SURVEY_INFO_MAX + 1];
++	static struct nla_policy survey_policy[NL80211_SURVEY_INFO_MAX + 1] = {
++		[NL80211_SURVEY_INFO_FREQUENCY] = { .type = NLA_U32 },
++		[NL80211_SURVEY_INFO_NOISE] = { .type = NLA_U8 },
++	};
++
++	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
++	struct airtime_result *result = (struct airtime_result *) arg;
++
++	nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0), genlmsg_attrlen(gnlh, 0), NULL);
++
++	if (!tb[NL80211_ATTR_SURVEY_INFO]) {
++		fprintf(stderr, "survey data missing!\n");
++		goto abort;
++	}
++
++	if (nla_parse_nested(sinfo, NL80211_SURVEY_INFO_MAX, tb[NL80211_ATTR_SURVEY_INFO], survey_policy)) {
++		fprintf(stderr, "failed to parse nested attributes!\n");
++		goto abort;
++	}
++
++	// Channel active?
++	if (!sinfo[NL80211_SURVEY_INFO_IN_USE]){
++		goto abort;
++	}
++
++	result->frequency   = nla_get_u32(sinfo[NL80211_SURVEY_INFO_FREQUENCY]);
++	result->active_time = nla_get_u64(sinfo[NL80211_SURVEY_INFO_CHANNEL_TIME]);
++	result->busy_time   = nla_get_u64(sinfo[NL80211_SURVEY_INFO_CHANNEL_TIME_BUSY]);
++	result->rx_time     = nla_get_u64(sinfo[NL80211_SURVEY_INFO_CHANNEL_TIME_RX]);
++	result->tx_time     = nla_get_u64(sinfo[NL80211_SURVEY_INFO_CHANNEL_TIME_TX]);
++	result->noise       = nla_get_u8(sinfo[NL80211_SURVEY_INFO_NOISE]);
++
++abort:
++	return NL_SKIP;
++}
++
++bool get_airtime(struct airtime_result *result, int ifx) {
++	bool ok = false;
++	int ctrl;
++	struct nl_sock *sk = NULL;
++	struct nl_msg *msg = NULL;
++
++
++#define CHECK(x) { if (!(x)) { fprintf(stderr, "%s: error on line %d\n", __FILE__, __LINE__); goto out; } }
++
++	CHECK(sk = nl_socket_alloc());
++	CHECK(genl_connect(sk) >= 0);
++
++	CHECK(ctrl = genl_ctrl_resolve(sk, NL80211_GENL_NAME));
++	CHECK(nl_socket_modify_cb(sk, NL_CB_VALID, NL_CB_CUSTOM, survey_airtime_handler, result) == 0);
++	CHECK(msg = nlmsg_alloc());
++	CHECK(genlmsg_put(msg, 0, 0, ctrl, 0, NLM_F_DUMP, NL80211_CMD_GET_SURVEY, 0));
++
++	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, ifx);
++
++	CHECK(nl_send_auto_complete(sk, msg) >= 0);
++	CHECK(nl_recvmsgs_default(sk) >= 0);
++
++#undef CHECK
++
++	ok = true;
++
++nla_put_failure:
++out:
++	if (msg)
++		nlmsg_free(msg);
++
++	if (sk)
++		nl_socket_free(sk);
++
++	return ok;
++}
+diff --git a/net/respondd-module-airtime/src/airtime.h b/net/respondd-module-airtime/src/airtime.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..e0ae6143772a24530d2addf904837389a4673f8e
+--- /dev/null
++++ b/net/respondd-module-airtime/src/airtime.h
+@@ -0,0 +1,15 @@
++#pragma once
++
++#include <stdbool.h>
++#include <stdint.h>
++
++struct airtime_result {
++	uint64_t active_time;
++	uint64_t busy_time;
++	uint64_t rx_time;
++	uint64_t tx_time;
++	uint32_t frequency;
++	uint8_t  noise;
++};
++
++__attribute__((visibility("hidden"))) bool get_airtime(struct airtime_result *result, int ifx);
+diff --git a/net/respondd-module-airtime/src/ifaces.c b/net/respondd-module-airtime/src/ifaces.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..ac0c252e9319d6f40242d516c3b158c72dfb30e3
+--- /dev/null
++++ b/net/respondd-module-airtime/src/ifaces.c
+@@ -0,0 +1,62 @@
++#include <sys/socket.h>
++#include <linux/nl80211.h>
++#include <netlink/netlink.h>
++#include <netlink/genl/genl.h>
++#include <netlink/genl/ctrl.h>
++#include <net/if.h>
++#include <stdlib.h>
++
++#include "ifaces.h"
++
++static int iface_dump_handler(struct nl_msg *msg, void *arg) {
++	struct nlattr *tb[NL80211_ATTR_MAX + 1];
++	struct genlmsghdr *gnlh = nlmsg_data(nlmsg_hdr(msg));
++	int wiphy;
++	struct iface_list **last_next;
++
++	nla_parse(tb, NL80211_ATTR_MAX, genlmsg_attrdata(gnlh, 0), genlmsg_attrlen(gnlh, 0), NULL);
++
++	wiphy = nla_get_u32(tb[NL80211_ATTR_WIPHY]);
++	for (last_next = arg; *last_next != NULL; last_next = &(*last_next)->next) {
++		if ((*last_next)->wiphy == wiphy)
++			goto skip;
++	}
++	*last_next = malloc(sizeof(**last_next));
++	(*last_next)->next = NULL;
++	(*last_next)->ifx = nla_get_u32(tb[NL80211_ATTR_IFINDEX]);
++	(*last_next)->wiphy = wiphy;
++
++skip:
++	return NL_SKIP;
++}
++
++struct iface_list *get_ifaces() {
++	int ctrl;
++	struct nl_sock *sk = NULL;
++	struct nl_msg *msg = NULL;
++	struct iface_list *ifaces = NULL;
++
++#define CHECK(x) { if (!(x)) { fprintf(stderr, "%s: error on line %d\n", __FILE__,  __LINE__); goto out; } }
++
++	CHECK(sk = nl_socket_alloc());
++	CHECK(genl_connect(sk) >= 0);
++
++	CHECK(ctrl = genl_ctrl_resolve(sk, NL80211_GENL_NAME));
++	CHECK(nl_socket_modify_cb(sk, NL_CB_VALID, NL_CB_CUSTOM, iface_dump_handler, &ifaces) == 0);
++	CHECK(msg = nlmsg_alloc());
++	CHECK(genlmsg_put(msg, 0, 0, ctrl, 0, NLM_F_DUMP, NL80211_CMD_GET_INTERFACE, 0));
++
++	CHECK(nl_send_auto_complete(sk, msg) >= 0);
++	CHECK(nl_recvmsgs_default(sk) >= 0);
++
++#undef CHECK
++
++out:
++	if (msg)
++		nlmsg_free(msg);
++
++	if (sk)
++		nl_socket_free(sk);
++
++	return ifaces;
++}
+diff --git a/net/respondd-module-airtime/src/ifaces.h b/net/respondd-module-airtime/src/ifaces.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..e87308716f5a70bd267d0b28a2ecc90af5d8c38e
+--- /dev/null
++++ b/net/respondd-module-airtime/src/ifaces.h
+@@ -0,0 +1,9 @@
++#pragma once
++
++struct iface_list {
++	int ifx;
++	int wiphy;
++	struct iface_list *next;
++};
++
++__attribute__((visibility("hidden"))) struct iface_list *get_ifaces();
+diff --git a/net/respondd-module-airtime/src/respondd.c b/net/respondd-module-airtime/src/respondd.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..4be02000129f1c68e119df7b0da308974fec0481
+--- /dev/null
++++ b/net/respondd-module-airtime/src/respondd.c
+@@ -0,0 +1,58 @@
++#include <string.h>
++#include <stdio.h>
++#include <json-c/json.h>
++#include <respondd.h>
++
++#include "airtime.h"
++#include "ifaces.h"
++
++static void fill_airtime_json(struct airtime_result *air, struct json_object *wireless) {
++	struct json_object *obj;
++
++	obj = json_object_new_object();
++	if (!obj)
++		return;
++
++	json_object_object_add(obj, "frequency", json_object_new_int(air->frequency));
++	json_object_object_add(obj, "active",    json_object_new_int64(air->active_time));
++	json_object_object_add(obj, "busy",      json_object_new_int64(air->busy_time));
++	json_object_object_add(obj, "rx",        json_object_new_int64(air->rx_time));
++	json_object_object_add(obj, "tx",        json_object_new_int64(air->tx_time));
++	json_object_object_add(obj, "noise",     json_object_new_int(air->noise));
++
++	json_object_array_add(wireless, obj);
++}
++
++static struct json_object *respondd_provider_statistics(void) {
++	struct airtime_result airtime = {0};
++	struct json_object *result, *wireless;
++	struct iface_list *ifaces;
++
++	result = json_object_new_object();
++	if (!result)
++		return NULL;
++
++	wireless = json_object_new_array();
++	if (!wireless) {
++		json_object_put(result);
++		return NULL;
++	}
++
++	ifaces = get_ifaces();
++	while (ifaces != NULL) {
++		if (get_airtime(&airtime, ifaces->ifx))
++			fill_airtime_json(&airtime, wireless);
++
++		void *freeptr = ifaces;
++		ifaces = ifaces->next;
++		free(freeptr);
++	}
++
++	json_object_object_add(result, "wireless", wireless);
++	return result;
++}
++
++const struct respondd_provider_info respondd_providers[] = {
++	{"statistics", respondd_provider_statistics},
++	{0, 0},
++};

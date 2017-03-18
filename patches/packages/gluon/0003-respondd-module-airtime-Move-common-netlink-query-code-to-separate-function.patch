@@ -1,0 +1,194 @@
+From: Jan-Philipp Litza <janphilipp@litza.de>
+Date: Wed, 8 Feb 2017 19:32:43 +0100
+Subject: respondd-module-airtime: Move common netlink query code to separate function
+
+Origin: upstream, https://github.com/freifunk-gluon/packages/commit/7b56f09e0f96ddc28456a98855e281457e54d6f0
+
+diff --git a/net/respondd-module-airtime/src/Makefile b/net/respondd-module-airtime/src/Makefile
+index 0c99578dfb4b946e5d11b11ac216773345601437..61f6da50f4fb0d24294df75b677985788354a497 100644
+--- a/net/respondd-module-airtime/src/Makefile
++++ b/net/respondd-module-airtime/src/Makefile
+@@ -9,7 +9,7 @@ all: respondd.so
+ 
+ %.c: %.h
+ 
+-respondd.so: airtime.c ifaces.c respondd.c
++respondd.so: netlink.c airtime.c ifaces.c respondd.c
+ 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) -shared -fPIC -D_GNU_SOURCE -lnl-tiny -o $@ $^ $(LDLIBS)
+ 
+ clean:
+diff --git a/net/respondd-module-airtime/src/airtime.c b/net/respondd-module-airtime/src/airtime.c
+index d6d071cfa12f5b0d0bee0190e8117db1814e1fd2..b9ec7cde547e8d430b8f1d4ada85ffe6f8d5861d 100644
+--- a/net/respondd-module-airtime/src/airtime.c
++++ b/net/respondd-module-airtime/src/airtime.c
+@@ -25,13 +25,10 @@
+   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+ 
+-#include <sys/socket.h>
+ #include <linux/nl80211.h>
+-#include <netlink/netlink.h>
+ #include <netlink/genl/genl.h>
+-#include <netlink/genl/ctrl.h>
+-#include <net/if.h>
+ 
++#include "netlink.h"
+ #include "airtime.h"
+ 
+ /*
+@@ -99,39 +96,6 @@ abort:
+ 	return NL_SKIP;
+ }
+ 
+-bool get_airtime(struct airtime_result *result, int ifx) {
+-	bool ok = false;
+-	int ctrl;
+-	struct nl_sock *sk = NULL;
+-	struct nl_msg *msg = NULL;
+-
+-
+-#define CHECK(x) { if (!(x)) { fprintf(stderr, "%s: error on line %d\n", __FILE__, __LINE__); goto out; } }
+-
+-	CHECK(sk = nl_socket_alloc());
+-	CHECK(genl_connect(sk) >= 0);
+-
+-	CHECK(ctrl = genl_ctrl_resolve(sk, NL80211_GENL_NAME));
+-	CHECK(nl_socket_modify_cb(sk, NL_CB_VALID, NL_CB_CUSTOM, survey_airtime_handler, result) == 0);
+-	CHECK(msg = nlmsg_alloc());
+-	CHECK(genlmsg_put(msg, 0, 0, ctrl, 0, NLM_F_DUMP, NL80211_CMD_GET_SURVEY, 0));
+-
+-	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, ifx);
+-
+-	CHECK(nl_send_auto_complete(sk, msg) >= 0);
+-	CHECK(nl_recvmsgs_default(sk) >= 0);
+-
+-#undef CHECK
+-
+-	ok = true;
+-
+-nla_put_failure:
+-out:
+-	if (msg)
+-		nlmsg_free(msg);
+-
+-	if (sk)
+-		nl_socket_free(sk);
+-
+-	return ok;
++bool get_airtime(struct json_object *result, int ifx) {
++	return nl_send_dump(survey_airtime_handler, result, NL80211_CMD_GET_SURVEY, ifx);
+ }
+diff --git a/net/respondd-module-airtime/src/ifaces.c b/net/respondd-module-airtime/src/ifaces.c
+index ac0c252e9319d6f40242d516c3b158c72dfb30e3..bfbd28e9bb4aaa7eea3b6896d7aa3f51ef326738 100644
+--- a/net/respondd-module-airtime/src/ifaces.c
++++ b/net/respondd-module-airtime/src/ifaces.c
+@@ -1,12 +1,8 @@
+-#include <sys/socket.h>
+ #include <linux/nl80211.h>
+-#include <netlink/netlink.h>
+ #include <netlink/genl/genl.h>
+-#include <netlink/genl/ctrl.h>
+-#include <net/if.h>
+-#include <stdlib.h>
+ 
+ #include "ifaces.h"
++#include "netlink.h"
+ 
+ static int iface_dump_handler(struct nl_msg *msg, void *arg) {
+ 	struct nlattr *tb[NL80211_ATTR_MAX + 1];
+@@ -31,32 +27,7 @@ skip:
+ }
+ 
+ struct iface_list *get_ifaces() {
+-	int ctrl;
+-	struct nl_sock *sk = NULL;
+-	struct nl_msg *msg = NULL;
+ 	struct iface_list *ifaces = NULL;
+-
+-#define CHECK(x) { if (!(x)) { fprintf(stderr, "%s: error on line %d\n", __FILE__,  __LINE__); goto out; } }
+-
+-	CHECK(sk = nl_socket_alloc());
+-	CHECK(genl_connect(sk) >= 0);
+-
+-	CHECK(ctrl = genl_ctrl_resolve(sk, NL80211_GENL_NAME));
+-	CHECK(nl_socket_modify_cb(sk, NL_CB_VALID, NL_CB_CUSTOM, iface_dump_handler, &ifaces) == 0);
+-	CHECK(msg = nlmsg_alloc());
+-	CHECK(genlmsg_put(msg, 0, 0, ctrl, 0, NLM_F_DUMP, NL80211_CMD_GET_INTERFACE, 0));
+-
+-	CHECK(nl_send_auto_complete(sk, msg) >= 0);
+-	CHECK(nl_recvmsgs_default(sk) >= 0);
+-
+-#undef CHECK
+-
+-out:
+-	if (msg)
+-		nlmsg_free(msg);
+-
+-	if (sk)
+-		nl_socket_free(sk);
+-
++	nl_send_dump(&iface_dump_handler, &ifaces, NL80211_CMD_GET_INTERFACE, 0);
+ 	return ifaces;
+ }
+diff --git a/net/respondd-module-airtime/src/netlink.c b/net/respondd-module-airtime/src/netlink.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..8b967118274559bdf4be62da4b15833904ecd507
+--- /dev/null
++++ b/net/respondd-module-airtime/src/netlink.c
+@@ -0,0 +1,43 @@
++#include <linux/nl80211.h>
++#include <netlink/genl/genl.h>
++#include <netlink/genl/ctrl.h>
++
++#include "netlink.h"
++
++bool nl_send_dump(nl_recvmsg_msg_cb_t cb, void *cb_arg, int cmd, uint32_t cmd_arg) {
++	bool ok = false;
++	int ctrl;
++	struct nl_sock *sk = NULL;
++	struct nl_msg *msg = NULL;
++
++
++#define CHECK(x) { if (!(x)) { fprintf(stderr, "%s: error on line %d\n", __FILE__, __LINE__); goto out; } }
++
++	CHECK(sk = nl_socket_alloc());
++	CHECK(genl_connect(sk) >= 0);
++
++	CHECK(ctrl = genl_ctrl_resolve(sk, NL80211_GENL_NAME));
++	CHECK(nl_socket_modify_cb(sk, NL_CB_VALID, NL_CB_CUSTOM, cb, cb_arg) == 0);
++	CHECK(msg = nlmsg_alloc());
++	CHECK(genlmsg_put(msg, 0, 0, ctrl, 0, NLM_F_DUMP, cmd, 0));
++
++	if (cmd_arg != 0)
++		NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, cmd_arg);
++
++	CHECK(nl_send_auto_complete(sk, msg) >= 0);
++	CHECK(nl_recvmsgs_default(sk) >= 0);
++
++#undef CHECK
++
++	ok = true;
++
++nla_put_failure:
++out:
++	if (msg)
++		nlmsg_free(msg);
++
++	if (sk)
++		nl_socket_free(sk);
++
++	return ok;
++}
+diff --git a/net/respondd-module-airtime/src/netlink.h b/net/respondd-module-airtime/src/netlink.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..022765e4dcfd019f976db4d86a7c1c8b5ed18930
+--- /dev/null
++++ b/net/respondd-module-airtime/src/netlink.h
+@@ -0,0 +1,7 @@
++#pragma once
++
++#include <stdbool.h>
++#include <stdint.h>
++#include <netlink/handlers.h>
++
++__attribute__((visibility("hidden"))) bool nl_send_dump(nl_recvmsg_msg_cb_t cb, void *cb_arg, int cmd, uint32_t cmd_arg);

@@ -1,0 +1,21 @@
+From: Matthias Schiffer <mschiffer@universe-factory.net>
+Date: Thu, 22 Dec 2016 23:42:00 +0100
+Subject: respondd-module-airtime: install to /usr/lib/respondd instead of /lib/respondd
+
+Origin: upstream, https://github.com/freifunk-gluon/packages/commit/d94f0f59568ef0af055f0e85d91f6b59e55bfea4
+
+diff --git a/net/respondd-module-airtime/Makefile b/net/respondd-module-airtime/Makefile
+index 2cf692ca497a59aca8b70abc53af7285746b19c1..1ddda3ec0a705f2d1caaa419e252bc33440724d0 100644
+--- a/net/respondd-module-airtime/Makefile
++++ b/net/respondd-module-airtime/Makefile
+@@ -35,8 +35,8 @@ endef
+ 
+ 
+ define Package/respondd-module-airtime/install
+-	$(INSTALL_DIR) $(1)/lib/respondd
+-	$(CP) $(PKG_BUILD_DIR)/respondd.so $(1)/lib/respondd/airtime.so
++	$(INSTALL_DIR) $(1)/usr/lib/respondd
++	$(CP) $(PKG_BUILD_DIR)/respondd.so $(1)/usr/lib/respondd/airtime.so
+ endef
+ 
+ $(eval $(call BuildPackage,respondd-module-airtime))
