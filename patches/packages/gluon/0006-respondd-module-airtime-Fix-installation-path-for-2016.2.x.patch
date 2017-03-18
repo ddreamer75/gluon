@@ -1,0 +1,19 @@
+From: Sven Eckelmann <sven@narfation.org>
+Date: Sat, 18 Mar 2017 15:31:52 +0100
+Subject: respondd-module-airtime: Fix installation path for 2016.2.x
+
+diff --git a/net/respondd-module-airtime/Makefile b/net/respondd-module-airtime/Makefile
+index 1ddda3ec0a705f2d1caaa419e252bc33440724d0..4ff3d9ff624c19a81d6678a9c965040843a799d0 100644
+--- a/net/respondd-module-airtime/Makefile
++++ b/net/respondd-module-airtime/Makefile
+@@ -35,8 +35,8 @@ endef
+ 
+ 
+ define Package/respondd-module-airtime/install
+-	$(INSTALL_DIR) $(1)/usr/lib/respondd
+-	$(CP) $(PKG_BUILD_DIR)/respondd.so $(1)/usr/lib/respondd/airtime.so
++	$(INSTALL_DIR) $(1)/lib/gluon/respondd
++	$(CP) $(PKG_BUILD_DIR)/respondd.so $(1)/lib/gluon/respondd/airtime.so
+ endef
+ 
+ $(eval $(call BuildPackage,respondd-module-airtime))
