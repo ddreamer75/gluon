@@ -1,0 +1,43 @@
+From: Sven Eckelmann <sven@narfation.org>
+Date: Thu, 20 Apr 2017 18:03:25 +0200
+Subject: batman-adv: Disable intermediate TT responses
+
+Some device introduced this flag in the global table. Every device which
+now does an intermediate response will sent this flag - even when the
+actual device would not respond with it. This breaks the CRC calculation on
+the receiver side and therefore introduces extra (unneeded) full table TT
+requests.
+
+diff --git a/batman-adv/patches/2001-batman-adv-Disable-intermediate-TT-responses.patch b/batman-adv/patches/2001-batman-adv-Disable-intermediate-TT-responses.patch
+new file mode 100644
+index 0000000000000000000000000000000000000000..e5bd038bde76221695abb454931bbffb72f84457
+--- /dev/null
++++ b/batman-adv/patches/2001-batman-adv-Disable-intermediate-TT-responses.patch
+@@ -0,0 +1,27 @@
++From: Sven Eckelmann <sven@narfation.org>
++Date: Thu, 20 Apr 2017 17:50:51 +0200
++Subject: [PATCH] batman-adv: Disable intermediate TT responses
++
++Some device introduced this flag in the global table. Every device which now
++does an intermediate response will sent this flag - even when the actual
++device would not respond with it. This breaks the CRC calculation on the
++receiver side and therefore introduces extra (unneeded) full table TT
++requests.
++---
++ net/batman-adv/translation-table.c | 3 +++
++ 1 file changed, 3 insertions(+)
++
++diff --git a/net/batman-adv/translation-table.c b/net/batman-adv/translation-table.c
++index 8aa225118ca37df8d1e86dc89fbeb02fdabe2202..ff9047943a6bc6e8ecb718452afe829eff974b02 100644
++--- a/net/batman-adv/translation-table.c
+++++ b/net/batman-adv/translation-table.c
++@@ -3130,6 +3130,9 @@ static bool batadv_send_other_tt_response(struct batadv_priv *bat_priv,
++ 		   req_src, tt_data->ttvn, req_dst,
++ 		   ((tt_data->flags & BATADV_TT_FULL_TABLE) ? 'F' : '.'));
++ 
+++	/* disable for gluon nodes to avoid problems with isolate and wifi flag */
+++	goto out;
+++
++ 	/* Let's get the orig node of the REAL destination */
++ 	req_dst_orig_node = batadv_orig_hash_find(bat_priv, req_dst);
++ 	if (!req_dst_orig_node)
