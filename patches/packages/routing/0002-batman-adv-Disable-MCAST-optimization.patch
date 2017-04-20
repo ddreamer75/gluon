@@ -1,0 +1,20 @@
+From: Sven Eckelmann <sven@narfation.org>
+Date: Thu, 20 Apr 2017 16:40:31 +0200
+Subject: batman-adv: Disable MCAST optimization
+
+Simon discovered some TT sync problem which might be related to the
+multicast optimization.
+
+diff --git a/batman-adv/Config.in b/batman-adv/Config.in
+index 1b2399fc0ba6fecb8b9dd7c1abf3a0d791ae4621..c97e9e195b0d5a6c7e96fd4a73470578c0f611c2 100644
+--- a/batman-adv/Config.in
++++ b/batman-adv/Config.in
+@@ -22,7 +22,7 @@ config KMOD_BATMAN_ADV_DEBUGFS
+ config KMOD_BATMAN_ADV_MCAST
+ 	bool "enable multicast transmission optimization"
+ 	depends on PACKAGE_kmod-batman-adv
+-	default y
++	default n
+ 
+ config KMOD_BATMAN_ADV_NC
+ 	bool "enable network coding [requires promisc mode support]"
