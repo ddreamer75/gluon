@@ -64,6 +64,14 @@ uci:section('fastd', 'fastd', 'mesh_vpn',
 )
 uci:delete('fastd', 'mesh_vpn', 'user')
 
+local function shuffle(array)
+    local n, i, j = table.getn(array)
+    for i=1, n do
+        j = math.random(n)
+        array[j],array[i] = array[i],array[j]
+    end
+    return array
+end
 
 local add_groups
 
@@ -74,7 +82,7 @@ local function add_peer(group, name, config)
       net = 'mesh_vpn',
       group = group,
       key = config.key,
-      remote = config.remotes,
+      remote = shuffle(config.remotes),
     }
   )
 end
