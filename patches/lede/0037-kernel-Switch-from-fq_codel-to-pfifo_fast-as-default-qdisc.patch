@@ -277,7 +277,7 @@ index 50b90b375f611d78b90e7e6dd9c1228e8c09d28a..00000000000000000000000000000000
 - struct Qdisc *qdisc_alloc(struct netdev_queue *dev_queue,
 diff --git a/target/linux/generic/patches-4.4/662-use_fq_codel_by_default.patch b/target/linux/generic/patches-4.4/662-use_fq_codel_by_default.patch
 deleted file mode 100644
-index 8952ab4e206b477f6392d17cf249f90de60232f4..0000000000000000000000000000000000000000
+index 9d1962caa93f5543188809dff589750dce9d81f0..0000000000000000000000000000000000000000
 --- a/target/linux/generic/patches-4.4/662-use_fq_codel_by_default.patch
 +++ /dev/null
 @@ -1,95 +0,0 @@
@@ -353,10 +353,10 @@ index 8952ab4e206b477f6392d17cf249f90de60232f4..00000000000000000000000000000000
 -+		qdisc = qdisc_create_dflt(dev_queue, &fq_codel_qdisc_ops,
 - 					  TC_H_MAKE(TC_H_MAJ(sch->handle),
 - 						    TC_H_MIN(ntx + 1)));
-- 		if (qdisc == NULL)
+- 		if (!qdisc)
 ---- a/net/sched/sch_mqprio.c
 -+++ b/net/sched/sch_mqprio.c
--@@ -124,7 +124,7 @@ static int mqprio_init(struct Qdisc *sch
+-@@ -122,7 +122,7 @@ static int mqprio_init(struct Qdisc *sch
 - 
 - 	for (i = 0; i < dev->num_tx_queues; i++) {
 - 		dev_queue = netdev_get_tx_queue(dev, i);
@@ -364,10 +364,10 @@ index 8952ab4e206b477f6392d17cf249f90de60232f4..00000000000000000000000000000000
 -+		qdisc = qdisc_create_dflt(dev_queue, &fq_codel_qdisc_ops,
 - 					  TC_H_MAKE(TC_H_MAJ(sch->handle),
 - 						    TC_H_MIN(i + 1)));
-- 		if (qdisc == NULL) {
+- 		if (!qdisc)
 ---- a/net/sched/sch_api.c
 -+++ b/net/sched/sch_api.c
--@@ -1948,7 +1948,7 @@ static int __init pktsched_init(void)
+-@@ -1951,7 +1951,7 @@ static int __init pktsched_init(void)
 - 		return err;
 - 	}
 - 
