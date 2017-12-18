@@ -29,9 +29,12 @@
 #include <netlink/genl/genl.h>
 #include <netlink/genl/ctrl.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdbool.h>
 
 #include "batman_adv.h"
+
+struct ether_addr;
 
 /**
  * struct batadv_nlquery_opts - internal state for batadv_genl_query()
@@ -98,5 +101,8 @@ extern struct nla_policy batadv_genl_policy[];
 int batadv_genl_query(const char *mesh_iface, enum batadv_nl_commands nl_cmd,
 		      nl_recvmsg_msg_cb_t callback, int flags,
 		      struct batadv_nlquery_opts *query_opts);
+
+int batadv_translate_mac(const char *mesh_iface, const struct ether_addr *mac,
+			 struct ether_addr *mac_out);
 
 #endif /* _BATADV_GENL_H_ */
