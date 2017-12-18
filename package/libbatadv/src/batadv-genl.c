@@ -217,3 +217,113 @@ err_free_sock:
 
 	return query_opts->err;
 }
+
+static const enum batadv_nl_attrs batadv_translate_mac_mandatory[] = {
+	BATADV_ATTR_TT_ADDRESS,
+	BATADV_ATTR_ORIG_ADDRESS,
+};
+
+/**
+ * struct batadv_translate_mac_opts - internal state for batadv_translate_mac()
+ */
+struct batadv_translate_mac_opts {
+	/** @mac: address of client (when !found) or of originator */
+	struct ether_addr mac;
+
+	/** @found: whether the originator for @mac was found in global TT */
+	bool found;
+
+	/** @query_opts: ankor for batadv_genl_query */
+	struct batadv_nlquery_opts query_opts;
+};
+
+/**
+ * batadv_translate_mac_cb() - Handle single entry during mac address search
+ * @msg: netlink message being processed
+ * @arg: &struct batadv_nlquery_opts given to batadv_genl_query()
+ *
+ * Return: NL_STOP when address found, NL_OK otherwise (to continue search)
+ */
+static int batadv_translate_mac_cb(struct nl_msg *msg, void *arg)
+{
+	struct nlattr *attrs[BATADV_ATTR_MAX + 1];
+	struct nlmsghdr *nlh = nlmsg_hdr(msg);
+	struct batadv_nlquery_opts *query_opts = arg;
+	struct batadv_translate_mac_opts *opts;
+	struct genlmsghdr *ghdr;
+	uint8_t *addr;
+	uint8_t *orig;
+
+	opts = container_of(query_opts, struct batadv_translate_mac_opts,
+			    query_opts);
+
+	if (!genlmsg_valid_hdr(nlh, 0))
+		return NL_OK;
+
+	ghdr = nlmsg_data(nlh);
+
+	if (ghdr->cmd != BATADV_CMD_GET_TRANSTABLE_GLOBAL)
+		return NL_OK;
+
+	if (nla_parse(attrs, BATADV_ATTR_MAX, genlmsg_attrdata(ghdr, 0),
+		      genlmsg_len(ghdr), batadv_genl_policy)) {
+		return NL_OK;
+	}
+
+	if (batadv_genl_missing_attrs(attrs, batadv_translate_mac_mandatory,
+				      ARRAY_SIZE(batadv_translate_mac_mandatory)))
+		return NL_OK;
+
+	addr = nla_data(attrs[BATADV_ATTR_TT_ADDRESS]);
+	orig = nla_data(attrs[BATADV_ATTR_ORIG_ADDRESS]);
+
+	if (!attrs[BATADV_ATTR_FLAG_BEST])
+		return NL_OK;
+
+	if (memcmp(&opts->mac, addr, ETH_ALEN) != 0)
+		return NL_OK;
+
+	memcpy(&opts->mac, orig, ETH_ALEN);
+	opts->found = true;
+	opts->query_opts.err = 0;
+
+	return NL_STOP;
+}
+
+/**
+ * batadv_translate_mac() - Translates a client MAC address using global
+ *  translation table to originator address
+ * @mesh_iface: name of the batman-adv mesh interface
+ * @mac: MAC address in the global translation table
+ * @mac_out: buffer which receives the originator address which handles the
+ *  mac address
+ *
+ * Return: 0 on success or negative error value otherwise
+ */
+__attribute__ ((visibility ("default")))
+int batadv_translate_mac(const char *mesh_iface, const struct ether_addr *mac,
+			 struct ether_addr *mac_out)
+{
+	struct batadv_translate_mac_opts opts = {
+		.found = false,
+		.query_opts = {
+			.err = 0,
+		},
+	};
+	int ret;
+
+	memcpy(&opts.mac, mac, ETH_ALEN);
+
+	ret = batadv_genl_query(mesh_iface, BATADV_CMD_GET_TRANSTABLE_GLOBAL,
+				batadv_translate_mac_cb, NLM_F_DUMP,
+				&opts.query_opts);
+	if (ret < 0)
+		return ret;
+
+	if (!opts.found)
+		return -ENOENT;
+
+	memcpy(mac_out, &opts.mac, ETH_ALEN);
+
+	return 0;
+}
