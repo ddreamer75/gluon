@@ -104,5 +104,7 @@ int batadv_genl_query(const char *mesh_iface, enum batadv_nl_commands nl_cmd,
 
 int batadv_translate_mac(const char *mesh_iface, const struct ether_addr *mac,
 			 struct ether_addr *mac_out);
+int batadv_get_tq(const char *mesh_iface, const struct ether_addr *mac,
+		  uint8_t *tq);
 
 #endif /* _BATADV_GENL_H_ */

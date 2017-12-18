@@ -327,3 +327,118 @@ int batadv_translate_mac(const char *mesh_iface, const struct ether_addr *mac,
 
 	return 0;
 }
+
+static const enum batadv_nl_attrs batadv_get_tq_mandatory[] = {
+	BATADV_ATTR_ORIG_ADDRESS,
+	BATADV_ATTR_TQ,
+};
+
+/**
+ * struct batadv_get_tq_opts - internal state for batadv_get_tq()
+ */
+struct batadv_get_tq_opts {
+	/** @mac: address of originator */
+	struct ether_addr mac;
+
+	/** @query_opts: translation quality of originator @mac */
+	uint8_t tq;
+
+	/**
+	 * @found: whether the best entry for originator @mac was found in
+	 *  originator table
+	 */
+	bool found;
+
+	/** @query_opts: ankor for batadv_genl_query */
+	struct batadv_nlquery_opts query_opts;
+};
+
+/**
+ * batadv_get_tq_cb() - Handle single entry during originator search
+ * @msg: netlink message being processed
+ * @arg: &struct batadv_nlquery_opts given to batadv_genl_query()
+ *
+ * Return: NL_STOP when best originator entry for @mac was found, NL_OK
+ *  otherwise (to continue search)
+ */
+static int batadv_get_tq_cb(struct nl_msg *msg, void *arg)
+{
+	struct nlattr *attrs[BATADV_ATTR_MAX + 1];
+	struct nlmsghdr *nlh = nlmsg_hdr(msg);
+	struct batadv_nlquery_opts *query_opts = arg;
+	struct batadv_get_tq_opts *opts;
+	struct genlmsghdr *ghdr;
+	uint8_t *orig;
+	uint8_t tq;
+
+	opts = container_of(query_opts, struct batadv_get_tq_opts,
+			    query_opts);
+
+	if (!genlmsg_valid_hdr(nlh, 0))
+		return NL_OK;
+
+	ghdr = nlmsg_data(nlh);
+
+	if (ghdr->cmd != BATADV_CMD_GET_ORIGINATORS)
+		return NL_OK;
+
+	if (nla_parse(attrs, BATADV_ATTR_MAX, genlmsg_attrdata(ghdr, 0),
+		      genlmsg_len(ghdr), batadv_genl_policy)) {
+		return NL_OK;
+	}
+
+	if (batadv_genl_missing_attrs(attrs, batadv_get_tq_mandatory,
+				      ARRAY_SIZE(batadv_get_tq_mandatory)))
+		return NL_OK;
+
+	orig = nla_data(attrs[BATADV_ATTR_ORIG_ADDRESS]);
+	tq = nla_get_u8(attrs[BATADV_ATTR_TQ]);
+
+	if (!attrs[BATADV_ATTR_FLAG_BEST])
+		return NL_OK;
+
+	if (memcmp(&opts->mac, orig, ETH_ALEN) != 0)
+		return NL_OK;
+
+	opts->tq = tq;
+	opts->found = true;
+	opts->query_opts.err = 0;
+
+	return NL_STOP;
+}
+
+/**
+ * batadv_get_tq() - Get TQ for best path to an originator
+ * @mesh_iface: name of the batman-adv mesh interface
+ * @mac: address of originator
+ * @tq: buffer which receives the best transmission quality towards originator
+ *
+ * Return: 0 on success or negative error value otherwise
+ */
+__attribute__ ((visibility ("default")))
+int batadv_get_tq(const char *mesh_iface, const struct ether_addr *mac,
+		  uint8_t *tq)
+{
+	struct batadv_get_tq_opts opts = {
+		.tq = 0,
+		.found = false,
+		.query_opts = {
+			.err = 0,
+		},
+	};
+	int ret;
+
+	memcpy(&opts.mac, mac, ETH_ALEN);
+
+	ret = batadv_genl_query(mesh_iface,  BATADV_CMD_GET_ORIGINATORS,
+				batadv_get_tq_cb, NLM_F_DUMP, &opts.query_opts);
+	if (ret < 0)
+		return ret;
+
+	if (!opts.found)
+		return -ENOENT;
+
+	*tq = opts.tq;
+
+	return 0;
+}
