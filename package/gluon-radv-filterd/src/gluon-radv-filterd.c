@@ -114,6 +114,7 @@ static struct global {
 	uint16_t max_tq;
 	uint16_t hysteresis_thresh;
 	struct router *best_router;
+	volatile sig_atomic_t stop_daemon;
 } G = {
 	.mesh_iface = "bat0",
 };
@@ -608,6 +609,11 @@ static void update_ebtables(void) {
 		error_message(0, 0, "warning: adding new rule to ebtables chain %s failed", G.chain);
 }
 
+static void sighandler(int sig __attribute__((unused)))
+{
+	G.stop_daemon = 1;
+}
+
 int main(int argc, char *argv[]) {
 	int retval;
 	fd_set rfds;
@@ -627,7 +633,11 @@ int main(int argc, char *argv[]) {
 	if (G.chain == NULL)
 		usage("No chain set!");
 
-	while (1) {
+	G.stop_daemon = 0;
+	signal(SIGINT, sighandler);
+	signal(SIGTERM, sighandler);
+
+	while (!G.stop_daemon) {
 		FD_ZERO(&rfds);
 		FD_SET(G.sock, &rfds);
 
