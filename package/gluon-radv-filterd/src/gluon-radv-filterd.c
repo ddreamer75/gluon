@@ -601,10 +601,10 @@ static void update_ebtables(void) {
 	G.best_router = router;
 
 	if (fork_execvp_timeout(&timeout, "ebtables", (const char *[])
-			{ "ebtables", "-F", G.chain, NULL }))
+			{ "ebtables", "--concurrent", "-F", G.chain, NULL }))
 		error_message(0, 0, "warning: flushing ebtables chain %s failed, not adding a new rule", G.chain);
 	else if (fork_execvp_timeout(&timeout, "ebtables", (const char *[])
-			{ "ebtables", "-A", G.chain, "-s", mac, "-j", "ACCEPT", NULL }))
+			{ "ebtables", "--concurrent", "-A", G.chain, "-s", mac, "-j", "ACCEPT", NULL }))
 		error_message(0, 0, "warning: adding new rule to ebtables chain %s failed", G.chain);
 }
 
