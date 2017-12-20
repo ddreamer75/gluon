@@ -13,5 +13,5 @@
 	&(var).ether_addr_octet[2], &(var).ether_addr_octet[3], \
 	&(var).ether_addr_octet[4], &(var).ether_addr_octet[5]
 
-#define ether_addr_equal(_a, _b) (memcmp(_a.ether_addr_octet, \
-					 _b.ether_addr_octet, ETH_ALEN) == 0)
+#define ether_addr_equal(_a, _b) (memcmp((_a).ether_addr_octet, \
+					 (_b).ether_addr_octet, ETH_ALEN) == 0)
