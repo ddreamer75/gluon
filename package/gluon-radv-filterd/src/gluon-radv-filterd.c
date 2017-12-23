@@ -110,7 +110,6 @@ struct router {
 static struct global {
 	int sock;
 	struct router *routers;
-	const char *iface;
 	const char *mesh_iface;
 	const char *chain;
 	uint16_t max_tq;
@@ -118,7 +117,6 @@ static struct global {
 	struct router *best_router;
 	volatile sig_atomic_t stop_daemon;
 } G = {
-	.iface = "br-client",
 	.mesh_iface = "bat0",
 };
 
@@ -264,12 +262,18 @@ static int init_packet_socket(unsigned int ifindex) {
 
 static void parse_cmdline(int argc, char *argv[]) {
 	int c;
+	unsigned int ifindex;
 	unsigned long int threshold;
 	char *endptr;
 	while ((c = getopt(argc, argv, "c:hi:m:t:")) != -1) {
 		switch (c) {
 			case 'i':
-				G.iface = optarg;
+				if (G.sock >= 0)
+					usage("-i given more than once");
+				ifindex = if_nametoindex(optarg);
+				if (ifindex == 0)
+					exit_errmsg("Unknown interface: %s", optarg);
+				G.sock = init_packet_socket(ifindex);
 				break;
 			case 'm':
 				G.mesh_iface = optarg;
@@ -729,7 +733,6 @@ static void sighandler(int sig __attribute__((unused)))
 }
 
 int main(int argc, char *argv[]) {
-	unsigned int ifindex;
 	int retval;
 	fd_set rfds;
 	struct timeval tv;
@@ -743,10 +746,8 @@ int main(int argc, char *argv[]) {
 	G.sock = -1;
 	parse_cmdline(argc, argv);
 
-	ifindex = if_nametoindex(G.iface);
-	if (ifindex == 0)
-		exit_errmsg("Unknown interface: %s", G.iface);
-	G.sock = init_packet_socket(ifindex);
+	if (G.sock < 0)
+		usage("No interface set!");
 
 	if (G.chain == NULL)
 		usage("No chain set!");
@@ -756,18 +757,6 @@ int main(int argc, char *argv[]) {
 	signal(SIGTERM, sighandler);
 
 	while (!G.stop_daemon) {
-		// try to reinitialize socket
-		if (G.sock < 0) {
-			sleep(1);
-
-			ifindex = if_nametoindex(G.iface);
-			if (ifindex == 0)
-				continue;
-
-			G.sock = init_packet_socket(ifindex);
-			continue;
-		}
-
 		FD_ZERO(&rfds);
 		FD_SET(G.sock, &rfds);
 
@@ -782,13 +771,9 @@ int main(int argc, char *argv[]) {
 			if (FD_ISSET(G.sock, &rfds)) {
 				handle_ra(G.sock);
 			}
-		} else {
-			// sometimes nothing is received via the socket
-			// re-initialize socket if this is the case
-			DEBUG_MSG("select() timeout expired; re-init packet socket");
-			close(G.sock);
-			G.sock = -1;
 		}
+		else
+			DEBUG_MSG("select() timeout expired");
 
 		clock_gettime(CLOCK_MONOTONIC, &now);
 		if (G.routers != NULL &&
