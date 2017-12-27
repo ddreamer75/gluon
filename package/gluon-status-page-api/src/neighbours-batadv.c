@@ -37,7 +37,7 @@ static int parse_orig_list_netlink_cb(struct nl_msg *msg, void *arg)
   struct neigh_netlink_opts *opts;
   char mac1[18];
 
-  opts = container_of(query_opts, struct neigh_netlink_opts, query_opts);
+  opts = batadv_container_of(query_opts, struct neigh_netlink_opts, query_opts);
 
   if (!genlmsg_valid_hdr(nlh, 0))
     return NL_OK;
@@ -52,7 +52,7 @@ static int parse_orig_list_netlink_cb(struct nl_msg *msg, void *arg)
     return NL_OK;
 
   if (batadv_genl_missing_attrs(attrs, parse_orig_list_mandatory,
-              ARRAY_SIZE(parse_orig_list_mandatory)))
+	                        BATADV_ARRAY_SIZE(parse_orig_list_mandatory)))
     return NL_OK;
 
   if (!attrs[BATADV_ATTR_FLAG_BEST])

@@ -29,18 +29,15 @@
 #include <netlink/genl/genl.h>
 #include <netlink/genl/ctrl.h>
 #include <stddef.h>
-#include <stdint.h>
 #include <stdbool.h>
 
 #include "batman_adv.h"
-
-struct ether_addr;
 
 /**
  * struct batadv_nlquery_opts - internal state for batadv_genl_query()
  *
  * This structure should be used as member of a struct which tracks the state
- * for the callback. The macro container_of can be used to convert the
+ * for the callback. The macro batadv_container_of can be used to convert the
  * arg pointer from batadv_nlquery_opts to the member which contains this
  * struct.
  */
@@ -50,25 +47,25 @@ struct batadv_nlquery_opts {
 };
 
 /**
- * ARRAY_SIZE() - Get number of items in static array
+ * BATADV_ARRAY_SIZE() - Get number of items in static array
  * @x: array with known length
  *
  * Return:  number of items in array
  */
-#ifndef ARRAY_SIZE
-#define ARRAY_SIZE(x) (sizeof(x) / sizeof(*(x)))
+#ifndef BATADV_ARRAY_SIZE
+#define BATADV_ARRAY_SIZE(x) (sizeof(x) / sizeof(*(x)))
 #endif
 
 /**
- * container_of() - Calculate address of object that contains address ptr
+ * batadv_container_of() - Calculate address of object that contains address ptr
  * @ptr: pointer to member variable
  * @type: type of the structure containing ptr
  * @member: name of the member variable in struct @type
  *
  * Return: @type pointer of object containing ptr
  */
-#ifndef container_of
-#define container_of(ptr, type, member) __extension__ ({ \
+#ifndef batadv_container_of
+#define batadv_container_of(ptr, type, member) __extension__ ({ \
 	const __typeof__(((type *)0)->member) *__pmember = (ptr); \
 	(type *)((char *)__pmember - offsetof(type, member)); })
 #endif
@@ -101,10 +98,5 @@ extern struct nla_policy batadv_genl_policy[];
 int batadv_genl_query(const char *mesh_iface, enum batadv_nl_commands nl_cmd,
 		      nl_recvmsg_msg_cb_t callback, int flags,
 		      struct batadv_nlquery_opts *query_opts);
-
-int batadv_translate_mac(const char *mesh_iface, const struct ether_addr *mac,
-			 struct ether_addr *mac_out);
-int batadv_get_tq(const char *mesh_iface, const struct ether_addr *mac,
-		  uint8_t *tq);
 
 #endif /* _BATADV_GENL_H_ */
